@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: listenTogether
+    runtime: node
+    repo: https://github.com/CoronaBringer/spotify-listen-together-server
+    healthCheckPath: /
+    buildCommand: yarn; yarn build
+    startCommand: yarn start
+    plan: free # optional (defaults to starter instance type)

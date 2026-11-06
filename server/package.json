@@ -1,0 +1,37 @@
+{
+  "name": "spotify-listen-together-server",
+  "version": "0.5.0",
+  "main": "index.js",
+  "scripts": {
+    "start-dev": "nodemon --exec \"ts-node --project tsconfig.server.json backend/index.ts\" --watch \"src/**\" --watch \"backend/**\" -e ts,tsx",
+    "start": "node dist/backend/index.js",
+    "build:server": "tsc --project tsconfig.server.json",
+    "build:next": "next build",
+    "build": "yarn run build:next && yarn run build:server",
+    "postinstall": "yarn run build",
+    "web-only": "next dev"
+  },
+  "dependencies": {
+    "@types/express": "^4.17.13",
+    "@types/node": "^20.4.2",
+    "@types/react": "18.2.15",
+    "@types/semver": "^7.3.9",
+    "express": "^4.17.2",
+    "next": "13.4.10",
+    "react": "18.2.0",
+    "react-dom": "18.2.0",
+    "semver": "^7.3.5",
+    "socket.io": "^4.4.0",
+    "socket.io-client": "^4.4.0"
+  },
+  "devDependencies": {
+    "eslint": "8.45.0",
+    "eslint-config-next": "13.4.10",
+    "nodemon": "^3.0.1",
+    "ts-node": "^10.4.0",
+    "typescript": "^5.1.6"
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}

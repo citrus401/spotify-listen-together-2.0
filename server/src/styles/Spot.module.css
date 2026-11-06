@@ -1,0 +1,20 @@
+.box {
+  padding: 25px;
+  background-color: #181818;
+  border: 3px #282828 ;
+  border-style: dashed;
+  border-radius: 30px;
+}
+
+.list {
+  display: flex;
+  max-width: 500px;
+  width: 70vw;
+  display: flex;
+  flex-direction: column;
+}
+
+.text {
+  margin: 5px 0;
+  font-size: 30px;
+}

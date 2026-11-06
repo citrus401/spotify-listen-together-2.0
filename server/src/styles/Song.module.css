@@ -1,0 +1,113 @@
+.header,
+.text {
+  padding: 0 1rem;
+}
+
+.header {
+  font-size: 2rem; 
+  margin-bottom: 1.25rem;
+}
+
+.text {
+  font-size: 1.25rem; 
+}
+
+.left {
+  margin-right: auto;
+}
+
+.contentContainer {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  min-height: 70vh;
+}
+
+.button {
+  background-color: var(--button-color);
+  color: #191414;
+  border: none;
+  font-size: 2rem;
+  padding: 0.9375rem 1.25rem;
+  border-radius: 10px;
+  cursor: pointer;
+  margin-top: 1.25rem;
+}
+
+.subButton {
+  background-color: var(--sub-button-color);
+  font-size: 1.25rem;
+}
+
+.button:active {
+  background-color: var(--active-button-color);
+}
+
+.subButton:active {
+  background-color: var(--active-sub-button-color);
+}
+
+.code {
+  width: 90vw;
+  margin: 0 0.3125rem;
+  overflow-x: scroll;
+}
+
+.code::-webkit-scrollbar {
+  display: none;
+}
+
+.instruction2Container {
+  position: relative;
+}
+
+.instructionsContainer img {
+  width: 397px;
+}
+
+.urlValue {
+  position: absolute;
+  outline: none;
+  color: white;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  top: 107px;
+  left: 158px;
+  height: 17px;
+  width: 187px;
+  overflow: hidden;
+}
+
+@media only screen and (max-width: 450px) { 
+  .instructionsContainer img {
+    width: 300px;
+  }
+
+  .urlValue {
+    font-size: 0.625rem;
+    top: 80px;
+    left: 120px;
+    height: 0.75rem;
+    width: 8.875rem;
+  }
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+}
+
+.footer {
+  background-color: #1f1919;
+  height: 10vh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+}
+
+.footer > * {
+  padding: 0 10px;
+}

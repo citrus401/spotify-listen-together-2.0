@@ -1,0 +1,43 @@
+@font-face {
+  font-family: 'Gotham';
+  src: url('/fonts/GothamBold.ttf');
+  font-weight: 700;
+  font-style: normal;
+}
+
+:root {
+  --primary-color: rgb(157, 255, 165);
+  --background-color: #191414;
+  --font-color: white;
+  --primary-color: #1db954;
+  --secondary-color: #c84cc8;
+  --dark-primary-color: #14a748;
+  --dark-secondary-color: #a53ea5;
+}
+
+html,
+body,
+#__next {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  overflow: auto;
+  padding: 0;
+  margin: 0;
+  font-family: 'Gotham', Arial, Helvetica, sans-serif;
+  color: var(--font-color);
+  background-color: var(--background-color);
+}
+
+body::-webkit-scrollbar {
+  display: none;
+}
+
+a {
+  color: var(--primary-color);
+}
+
+footer {
+  margin-top: auto;
+}
