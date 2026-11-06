@@ -86,10 +86,11 @@ export default class Patcher {
       console.warn('[listenTogether] player event emitter moved, the extra play/pause guard is off');
     }
 
-    if (Spicetify.Platform.PlaybackAPI?.setVolume) {
-      ogPlayerAPI.setVolume = (volume: number) => {
-        Spicetify.Platform.PlaybackAPI.setVolume(volume);
-      };
+    // bound to the real one. this used to be a wrapper that looked setVolume up live, then "restoring" it on
+    // disconnect made setVolume call itself forever and volume died till restart
+    const playback = Spicetify.Platform.PlaybackAPI;
+    if (typeof playback?.setVolume === 'function') {
+      ogPlayerAPI.setVolume = playback.setVolume.bind(playback);
     }
   }
 
@@ -136,10 +137,7 @@ export default class Patcher {
       Spicetify.Platform.PlayerAPI._events._emitter.emitSync =
         this.emitSyncHandler;
     }
-
-    if (ogPlayerAPI.setVolume) {
-      Spicetify.Platform.PlayerAPI.setVolume = this.setVolumeHandler;
-    }
+    // volume isn't patched. the old patch hit PlayerAPI which has no setVolume, so it never blocked anything anyway
   }
 
   private restorePlayerFunctions() {
@@ -151,10 +149,6 @@ export default class Patcher {
     if (ogPlayerAPI.emitSync) {
       Spicetify.Platform.PlayerAPI._events._emitter.emitSync =
         ogPlayerAPI.emitSync;
-    }
-
-    if (ogPlayerAPI.setVolume) {
-      Spicetify.Platform.PlaybackAPI.setVolume = ogPlayerAPI.setVolume;
     }
   }
 
@@ -235,10 +229,6 @@ export default class Patcher {
     };
   };
 
-  private setVolumeHandler = (e: number) => {
-    if (!this.ltPlayer.client.connected || this.ltPlayer.canChangeVolume)
-      ogPlayerAPI.setVolume(e);
-  };
 
   private historyChangeHandler = ({ pathname }: { pathname?: string }) => {
     let pathParts = pathname?.split('/', 3).filter((i) => i);
