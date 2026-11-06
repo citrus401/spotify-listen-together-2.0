@@ -4,8 +4,11 @@ import React from 'react';
 import BottomInfo from './ui/bottomInfo';
 import {
   forcePlayTrack,
+  getCurrentTrackUri,
+  getTrackProgress,
   getTrackType,
   isListenableTrackType,
+  isTrackPaused,
 } from './utils/spotifyUtils';
 import { Transport } from './transport/transport';
 import { PeerHost, PeerJoin, cleanRoomCode } from './transport/peer';
@@ -61,7 +64,12 @@ export default class Client {
 
   /** reuse a code when reconnecting so friends don't need a new one */
   hostRoom(code?: string) {
-    const host = new PeerHost(this.ltPlayer.version, code);
+    // your own playback is what everyone syncs to. minus your offset, so your slider moves you and not the whole room
+    const host = new PeerHost(this.ltPlayer.version, code, () => ({
+      trackUri: getCurrentTrackUri(),
+      position: getTrackProgress() - this.ltPlayer.syncOffset,
+      playing: !isTrackPaused(),
+    }));
     this.start({ kind: 'host', code: host.code }, host.self);
     return host.code;
   }
@@ -144,9 +152,9 @@ export default class Client {
         this.ltPlayer.onUpdateSong(pause, milliseconds);
     });
 
-    on('syncPosition', (trackUri: string, milliseconds: number) => {
+    on('syncPosition', (trackUri: string, milliseconds: number, hostTimestamp?: number) => {
       if (isListenableTrackType())
-        this.ltPlayer.onSyncPosition(trackUri, milliseconds);
+        this.ltPlayer.onSyncPosition(trackUri, milliseconds, hostTimestamp);
     });
 
     on('bottomMessage', (message: string) => {

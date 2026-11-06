@@ -19,11 +19,20 @@ import {
 } from './utils/spotifyUtils';
 
 const AD_CHECK_INTERVAL = 2000;
-// 150 is a guess, tune it. drift under this gets left alone, every correction is a seek and seeks hiccup
-const DRIFT_TOLERANCE = 150;
+/*
+  every correction is a seek and seeks hiccup (spotify won't do speed changes on music, checked), so the
+  trick is clean readings: then the bar can be tight without seeking over noise.
+  precise = rooms. timestamped positions + matched clocks, readings are a few ms off at most.
+  loose = the node server. timing there is a guess at the network delay, so it needs more slack.
+  drift is judged on the median of the last few readings so one bad one can't trigger a seek
+*/
+const PRECISE = { tolerance: 80, samples: 5, cooldown: 8000 };
+const LOOSE = { tolerance: 250, samples: 3, cooldown: 30000 };
+// 2 readings this far off in a row is a real jump (buffering, a skip), fixed right away
+const BIG_DRIFT = 1000;
 // progress is prob off for a bit after a seek or resume, so no judging drift till it settles
 const SETTLE_TIME = 2000;
-const MAX_SEEK_LEAD = 1000;
+const MAX_SEEK_LEAD = 600;
 // near the end a correction could seek past it and skip the song
 const END_GUARD = 2000;
 
@@ -46,6 +55,8 @@ export default class LTPlayer {
   /** spotify takes a moment to actually play after a seek, so corrections aim this far ahead. learned, see onSyncPosition */
   private seekLead = 0;
   private correcting = false;
+  private driftSamples: number[] = [];
+  private lastCorrection = 0;
   /** last song the room told us about, '' till it does */
   private roomTrackUri = '';
   private settleUntil = 0;
@@ -168,6 +179,7 @@ export default class LTPlayer {
 
   private resetSync() {
     this.correcting = false;
+    this.driftSamples = [];
     this.settleUntil = Date.now() + SETTLE_TIME;
     if (this.delayedResume) clearTimeout(this.delayedResume);
     this.delayedResume = null;
@@ -188,6 +200,16 @@ export default class LTPlayer {
     }
 
     const target = milliseconds + this.syncOffset;
+    // already playing it about there (host's own echo, someone joining mid song), a seek would just hiccup
+    if (
+      !isTrackPaused() &&
+      target >= 0 &&
+      Math.abs(getTrackProgress() - target) <
+        // the room owner gets their own seeks echoed back late, 250 keeps that from double seeking
+        (this.client.mode?.kind === 'host' ? LOOSE.tolerance : PRECISE.tolerance)
+    ) {
+      return;
+    }
     if (target >= 0) {
       ogPlayerAPI.seekTo(target);
       resumeTrack();
@@ -202,35 +224,58 @@ export default class LTPlayer {
     }
   }
 
-  /** milliseconds = where an in sync listener is right now, the server lines up the arrival time */
-  onSyncPosition(trackUri: string, milliseconds: number) {
+  /**
+   * hostTimestamp = when (host's clock) the host was at milliseconds. rooms send it, the node server doesn't,
+   * and then milliseconds is just where an in sync listener is when this lands
+   */
+  onSyncPosition(trackUri: string, milliseconds: number, hostTimestamp?: number) {
+    // in your own room your playback IS the reference, so you never get yanked around
+    if (this.client.mode?.kind === 'host') return;
     if (!this.trackLoaded || this.delayedResume) return;
     if (getCurrentTrackUri() !== trackUri || isTrackPaused()) return;
     if (Date.now() < this.settleUntil) return;
 
-    const target = milliseconds + this.syncOffset;
+    const hostNow =
+      typeof hostTimestamp === 'number' ? this.client.socket?.hostTime?.() ?? null : null;
+    const precise = hostNow !== null;
+    const cfg = precise ? PRECISE : LOOSE;
+    const expected = precise ? milliseconds + (hostNow! - hostTimestamp!) : milliseconds;
+
+    const target = expected + this.syncOffset;
     if (target < 0 || target > Spicetify.Player.getDuration() - END_GUARD)
       return;
 
     const drift = getTrackProgress() - target;
+    this.driftSamples.push(drift);
+    if (this.driftSamples.length > cfg.samples) this.driftSamples.shift();
+    const sorted = [...this.driftSamples].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
 
-    if (this.correcting) {
-      // whatever's left after our last seek is how late spotify starts playing after one.
-      // half steps so one bad reading doesn't throw it way off
-      this.seekLead = Math.min(
-        MAX_SEEK_LEAD,
-        Math.max(0, this.seekLead - drift / 2),
-      );
+    if (this.correcting && this.driftSamples.length >= 3) {
+      // what's left after our last seek is how late spotify starts playing after one. half steps on a
+      // median, single readings made it overshoot and bounce back and forth
+      this.seekLead = Math.min(MAX_SEEK_LEAD, Math.max(0, this.seekLead - median / 2));
       this.correcting = false;
     }
 
-    if (Math.abs(drift) < DRIFT_TOLERANCE) return;
+    // 2 big ones in a row is a real jump, not noise. those skip the wait
+    const bigJump =
+      this.driftSamples.length >= 2 &&
+      this.driftSamples.slice(-2).every((d) => Math.abs(d) > BIG_DRIFT);
+
+    if (!bigJump) {
+      if (this.driftSamples.length < cfg.samples) return;
+      if (Math.abs(median) < cfg.tolerance) return;
+      if (Date.now() - this.lastCorrection < cfg.cooldown) return;
+    }
 
     console.log(
-      `[listenTogether] ${Math.round(drift)}ms off, seeking (lead ${Math.round(this.seekLead)}ms)`,
+      `[listenTogether] ${Math.round(median)}ms off (${precise ? 'precise' : 'loose'}), seeking with ${Math.round(this.seekLead)}ms lead`,
     );
     ogPlayerAPI.seekTo(target + this.seekLead);
     this.correcting = true;
+    this.driftSamples = [];
+    this.lastCorrection = Date.now();
     this.settleUntil = Date.now() + SETTLE_TIME;
   }
 
@@ -249,6 +294,7 @@ export default class LTPlayer {
     ) {
       // same lead as corrections, without it the seek stall ate most of a 300ms move in testing
       this.correcting = true;
+      this.driftSamples = [];
       this.settleUntil = Date.now() + SETTLE_TIME;
       ogPlayerAPI.seekTo(
         Math.max(0, getTrackProgress() + delta + this.seekLead),

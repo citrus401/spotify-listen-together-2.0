@@ -1,5 +1,5 @@
 import { joinRoom, selfId } from 'trystero';
-import RoomHost from '../room/roomHost';
+import RoomHost, { Reference } from '../room/roomHost';
 import { EventHub, stripFunctions } from './transport';
 
 /*
@@ -12,6 +12,10 @@ const APP_ID = 'spotify-listen-together';
 const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const PING_INTERVAL = 1000;
 const FIND_HOST_TIMEOUT = 20000;
+// clock matching, same idea as internet time sync. a few quick ones on join so it's usable fast
+const CLOCK_BURST = 6;
+const CLOCK_INTERVAL = 2000;
+const CLOCK_SAMPLES = 20;
 
 type Message = { e: string; a: any[] };
 
@@ -51,7 +55,7 @@ export class PeerHost {
   private p2p: ReturnType<typeof openRoom>;
   private pingTimers = new Map<string, ReturnType<typeof setInterval>>();
 
-  constructor(version: string, code?: string) {
+  constructor(version: string, code?: string, reference?: Reference) {
     this.code = code || makeRoomCode();
     this.p2p = openRoom(this.code, (details) =>
       console.warn("[listenTogether] a friend couldn't connect", details?.error),
@@ -70,12 +74,14 @@ export class PeerHost {
       },
       selfId,
       version,
+      reference,
     );
 
     this.self.emit = (event, ...args) => {
       setTimeout(() => this.roomHost.handle(selfId, event, stripFunctions(args)), 0);
     };
     this.self.disconnect = () => this.close();
+    this.self.hostTime = () => Date.now();
 
     this.p2p.room.onPeerJoin = (peerId: string) => {
       this.roomHost.addMember(peerId);
@@ -96,8 +102,13 @@ export class PeerHost {
     };
 
     this.p2p.onMessage((msg, peerId) => {
-      if (msg && typeof msg.e === 'string' && Array.isArray(msg.a))
-        this.roomHost.handle(peerId, msg.e, msg.a);
+      if (!msg || typeof msg.e !== 'string' || !Array.isArray(msg.a)) return;
+      // answered right here instead of going through the room, every ms of delay is error
+      if (msg.e === '__clk') {
+        this.p2p.send({ e: '__clk', a: [msg.a[0], Date.now()] }, peerId);
+        return;
+      }
+      this.roomHost.handle(peerId, msg.e, msg.a);
     });
 
     this.roomHost.addMember(selfId);
@@ -120,6 +131,8 @@ export class PeerJoin extends EventHub {
   private closed = false;
   private sawJoinError = false;
   private findTimer: ReturnType<typeof setTimeout>;
+  private clockTimer: ReturnType<typeof setInterval> | null = null;
+  private clockSamples: { rtt: number; offset: number }[] = [];
 
   constructor(readonly code: string) {
     super();
@@ -133,12 +146,14 @@ export class PeerJoin extends EventHub {
       if (!data?.host || this.hostId) return;
       this.hostId = peerId;
       clearTimeout(this.findTimer);
+      this.startClock();
       this.dispatch('connect');
     });
 
     this.p2p.onMessage((msg, peerId) => {
       // other friends connect to us too (trystero meshes everyone), only the host gets to talk
       if (peerId !== this.hostId || !msg || typeof msg.e !== 'string') return;
+      if (msg.e === '__clk') return this.onClock(msg.a);
       this.dispatch(msg.e, ...(Array.isArray(msg.a) ? msg.a : []));
     });
 
@@ -160,6 +175,39 @@ export class PeerJoin extends EventHub {
     if (this.hostId) this.p2p.send({ e: event, a: stripFunctions(args) }, this.hostId);
   }
 
+  /*
+    the sample with the fastest round trip is the one where the network delay was most even both ways,
+    so its offset is the most trustworthy. slow samples are mostly jitter
+  */
+  hostTime = () => {
+    if (this.clockSamples.length < 3) return null;
+    const best = this.clockSamples.reduce((a, b) => (b.rtt < a.rtt ? b : a));
+    return Date.now() + best.offset;
+  };
+
+  private startClock() {
+    const ping = () => {
+      if (this.hostId && !this.closed)
+        this.p2p.send({ e: '__clk', a: [Date.now()] }, this.hostId);
+    };
+    for (let i = 0; i < CLOCK_BURST; i++) setTimeout(ping, i * 150);
+    this.clockTimer = setInterval(ping, CLOCK_INTERVAL);
+  }
+
+  private onClock(args: any) {
+    const [sentAt, hostNow] = Array.isArray(args) ? args : [];
+    if (typeof sentAt !== 'number' || typeof hostNow !== 'number') return;
+    const rtt = Date.now() - sentAt;
+    if (rtt < 0 || rtt > 5000) return;
+    this.clockSamples.push({ rtt, offset: hostNow - (sentAt + rtt / 2) });
+    if (this.clockSamples.length > CLOCK_SAMPLES) this.clockSamples.shift();
+  }
+
+  private stopClock() {
+    if (this.clockTimer) clearInterval(this.clockTimer);
+    this.clockTimer = null;
+  }
+
   disconnect() {
     this.drop('io client disconnect');
   }
@@ -168,6 +216,7 @@ export class PeerJoin extends EventHub {
     if (this.closed) return;
     this.closed = true;
     clearTimeout(this.findTimer);
+    this.stopClock();
     this.p2p.room.leave();
     this.dispatch('roomError', message);
   }
@@ -176,6 +225,7 @@ export class PeerJoin extends EventHub {
     if (this.closed) return;
     this.closed = true;
     clearTimeout(this.findTimer);
+    this.stopClock();
     this.p2p.room.leave();
     this.dispatch('disconnect', reason);
   }

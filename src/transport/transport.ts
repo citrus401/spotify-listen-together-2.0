@@ -7,6 +7,8 @@ export interface Transport {
   on(event: string, handler: (...args: any[]) => void): void;
   onAny(handler: (event: string, ...args: any[]) => void): void;
   disconnect(): void;
+  /** the room host's Date.now() as best we can tell, null till we know. rooms only, socket.io doesn't have it */
+  hostTime?(): number | null;
 }
 
 export class EventHub implements Transport {
@@ -31,6 +33,8 @@ export class EventHub implements Transport {
   emit(_event: string, ..._args: any[]) {}
 
   disconnect() {}
+
+  hostTime?: () => number | null;
 }
 
 /** ack callbacks only work over socket.io, everything else would choke trying to send a function */

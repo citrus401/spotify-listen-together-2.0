@@ -19,9 +19,14 @@ export interface RoomHostIO {
   send(memberId: string, event: string, ...args: any[]): void;
 }
 
+/** where the owner's player actually is. null if it can't say */
+export type Reference = () => { trackUri: string; position: number; playing: boolean } | null;
+
 // same numbers the node server uses
 const MAX_DELAY = 5000;
 const SYNC_INTERVAL = 3000;
+// rooms with a reference send timestamped positions, cheap enough to do every second for tighter sync
+const REFERENCE_SYNC_INTERVAL = 1000;
 
 function isListenable(uri: string) {
   return uri.startsWith('spotify:track:') || uri.startsWith('spotify:episode:');
@@ -42,16 +47,26 @@ export default class RoomHost {
   private loadingTrack: ReturnType<typeof setTimeout> | null = null;
   private locked = false;
   private loadAtMilliseconds = 0;
+  private loadAtTime = 0;
+  private resumeLive = false;
   private queue: ContextTrack[] = [];
   private syncTimer: ReturnType<typeof setInterval>;
 
-  /** ownerId = whoever made the room, they're always host */
+  /**
+   * ownerId = whoever made the room, they're always host.
+   * reference = the owner's real playback. when there is one everyone syncs to the actual music
+   * instead of a clock, and the owner never gets corrected
+   */
   constructor(
     private io: RoomHostIO,
     private ownerId: string,
     private version: string,
+    private reference?: Reference,
   ) {
-    this.syncTimer = setInterval(() => this.syncListeners(), SYNC_INTERVAL);
+    this.syncTimer = setInterval(
+      () => this.syncListeners(),
+      reference ? REFERENCE_SYNC_INTERVAL : SYNC_INTERVAL,
+    );
   }
 
   close() {
@@ -201,10 +216,21 @@ export default class RoomHost {
       : this.milliseconds + (Date.now() - this.millisecondsLastUpdate);
   }
 
+  private maxLatency() {
+    return Math.max(0, ...this.listeners().map((l) => l.latency));
+  }
+
+  /** where the owner will be when a message sent right now lands, null if there's no usable reference */
+  private referenceAtArrival() {
+    const ref = this.reference?.();
+    if (!ref || !ref.playing || ref.trackUri !== this.trackUri) return null;
+    return ref.position + this.maxLatency();
+  }
+
   /** delays each send so it lands for everyone at the same moment, the slowest connection sets the pace */
   private emitToListeners(event: string, ...args: any[]) {
     const listeners = this.listeners();
-    const maxLatency = Math.max(0, ...listeners.map((l) => l.latency));
+    const maxLatency = this.maxLatency();
     listeners.forEach((l) => {
       const delay = maxLatency - l.latency;
       if (delay <= 0) this.io.send(l.id, event, ...args);
@@ -230,11 +256,22 @@ export default class RoomHost {
 
   /*
     arrives for everyone at once like updateSong did, so on arrival an in sync listener is exactly here.
-    the client does the drift math
+    with a reference that's the owner's actual music, otherwise the clock. the client does the drift math
   */
   private syncListeners() {
     if (this.locked || this.paused || this.loadingTrack !== null || !isListenable(this.trackUri))
       return;
+
+    // with a reference: the owner's position + when it was read (owner's clock). friends match clocks with
+    // the owner, so network delay and jitter just don't matter. sent straight out, no delaying
+    const at = Date.now();
+    const ref = this.reference?.();
+    if (ref && ref.playing && ref.trackUri === this.trackUri) {
+      this.listeners().forEach((l) =>
+        this.io.send(l.id, 'syncPosition', this.trackUri, ref.position, at),
+      );
+      return;
+    }
     this.emitToListeners('syncPosition', this.trackUri, this.getTrackProgress());
   }
 
@@ -269,7 +306,10 @@ export default class RoomHost {
   private checkDesynchronizedListeners() {
     if (this.loadingTrack !== null) return;
     if (this.listeners().some((l) => l.trackUri !== this.trackUri)) {
-      this.loadAtMilliseconds = this.getTrackProgress();
+      this.loadAtMilliseconds = this.referenceAtArrival() ?? this.getTrackProgress();
+      this.loadAtTime = Date.now();
+      // everyone already in keeps playing while the new person loads
+      this.resumeLive = !this.paused;
       this.changeSong(this.trackUri);
     }
   }
@@ -278,9 +318,19 @@ export default class RoomHost {
     if (this.loadingTrack) clearTimeout(this.loadingTrack);
     this.loadingTrack = null;
     const milliseconds = this.loadAtMilliseconds;
+    const live = this.resumeLive;
+    const since = this.loadAtTime;
     this.loadAtMilliseconds = 0;
+    this.resumeLive = false;
     // a second for everyone's player to settle before the shared play
-    setTimeout(() => this.updateSong(false, milliseconds), 1000);
+    setTimeout(() => {
+      // someone joined mid song. the old way sent the position from before they loaded, so the whole
+      // room jumped back a few seconds every time somebody joined
+      const at = live
+        ? this.referenceAtArrival() ?? milliseconds + (Date.now() - since)
+        : milliseconds;
+      this.updateSong(false, at);
+    }, 1000);
   }
 
   private lock(lock: boolean) {

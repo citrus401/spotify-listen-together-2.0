@@ -90,8 +90,18 @@ export function isTrackPaused() {
   return !Spicetify.Player.isPlaying();
 }
 
+/*
+  same math spotify's own progress bar uses. spicetify's getProgress keeps counting while buffering,
+  which reads as drift and made us seek for nothing
+*/
 export function getTrackProgress() {
-  return Spicetify.Player.getProgress();
+  const s = Spicetify.Platform.PlayerAPI._state;
+  if (!s || s.positionAsOfTimestamp == null || s.timestamp == null)
+    return Spicetify.Player.getProgress();
+  const pos = Number(s.positionAsOfTimestamp);
+  if (s.isPaused || s.isBuffering) return pos;
+  const now = pos + (Date.now() - Number(s.timestamp)) * (s.speed ?? 1);
+  return s.duration ? Math.min(now, Number(s.duration)) : now;
 }
 
 export function forcePlayTrack(trackUri: string): void {
