@@ -134,7 +134,11 @@ export default class RoomHost {
         if (m.isHost && uri !== this.trackUri) {
           if (this.locked)
             this.io.send(id, 'bottomMessage', 'Listen together is currently locked!');
-          else this.changeSong(uri);
+          else {
+            this.changeSong(uri);
+            // 2nd arg = start mid song, for when the host hits play on a song they already had open
+            this.loadAtMilliseconds = Math.max(0, Number(args[1]) || 0);
+          }
         }
         return;
       }

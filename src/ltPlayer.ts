@@ -46,6 +46,8 @@ export default class LTPlayer {
   /** spotify takes a moment to actually play after a seek, so corrections aim this far ahead. learned, see onSyncPosition */
   private seekLead = 0;
   private correcting = false;
+  /** last song the room told us about, '' till it does */
+  private roomTrackUri = '';
   private settleUntil = 0;
   private delayedResume: ReturnType<typeof setTimeout> | null = null;
 
@@ -86,8 +88,19 @@ export default class LTPlayer {
 
   requestUpdateSong(paused: boolean, milliseconds: number) {
     let trackType = getTrackType();
+    const current = getCurrentTrackUri();
 
-    if (isListenableTrackType(trackType))
+    if (isListenableTrackType(trackType) && this.isHost && current !== this.roomTrackUri) {
+      // the room only hears about songs on a track change, so a song that was already sitting there when
+      // you hosted got ignored and play did nothing. tell it about the song first, it starts everyone from here
+      if (!paused) {
+        this.currentLoadingTrack = current;
+        this.trackLoaded = true;
+        // wait for the others to load it too, the room starts everyone at once
+        pauseTrack();
+        this.client.socket?.emit('loadingSong', current, milliseconds);
+      }
+    } else if (isListenableTrackType(trackType))
       this.client.socket?.emit('requestUpdateSong', paused, milliseconds);
     else
       this.onUpdateSong(
@@ -140,6 +153,7 @@ export default class LTPlayer {
   }
 
   onChangeSong(trackUri: string) {
+    this.roomTrackUri = trackUri;
     if (this.currentLoadingTrack === trackUri) {
       if (this.trackLoaded)
         this.client.socket?.emit('changedSong', this.currentLoadingTrack);
@@ -284,6 +298,7 @@ export default class LTPlayer {
   }
 
   onLogin() {
+    this.roomTrackUri = '';
     pauseTrack();
     if (this.volumeChangeEnabled) {
       this.canChangeVolume = true;
