@@ -20,7 +20,19 @@ export default class Player {
   public loadAtMilliseconds = 0;
   public queue: ContextTrack[] = [];
   
-  constructor(public socketServer: SocketServer) { }
+  constructor(public socketServer: SocketServer) {
+    setInterval(() => this.syncListeners(), config.syncInterval)
+  }
+
+  /*
+    emitToListeners makes everyone receive this at the same moment, the same way updateSong arrived.
+    so on arrival a listener that's in sync is exactly at this position, no latency math needed client side
+  */
+  syncListeners() {
+    if (this.locked || this.paused || this.loadingTrack !== null || !Player.isTrackListenable(this.trackUri))
+      return
+    this.socketServer.emitToListeners("syncPosition", this.trackUri, this.getTrackProgress())
+  }
 
   static isTrackListenable(trackUri: string) {
     return trackUri.startsWith("spotify:track:") || trackUri.startsWith("spotify:episode:")
