@@ -9,17 +9,41 @@ export enum TrackType {
   Unknown,
 }
 
+/** only the name gets used. returns { name } or { error } */
 export async function getTrackData(trackUri: string) {
-  if (isTrack(trackUri)) trackUri = trackUri.split(':')[2];
+  const isEpisode = trackUri.split(':')[1] === 'episode';
 
-  let token = await Spicetify.CosmosAsync.get('sp://auth/v2/token');
-  return await fetch(`https://api.spotify.com/v1/tracks/${trackUri}`, {
-    headers: { authorization: 'Bearer ' + token.accessToken },
-  }).then((a) => a.json());
+  // the web api 429s the desktop token basically always now, spotify's own graphql doesn't
+  try {
+    const defs = Spicetify.GraphQL?.Definitions;
+    const query = isEpisode ? defs?.getEpisodeName : defs?.getTrackName;
+    if (query) {
+      const res = await Spicetify.GraphQL.Request(query, { uri: trackUri });
+      // trackUnion for tracks, some other union for episodes, both just have name
+      const name = Object.values<any>(res?.data || {})[0]?.name;
+      if (name) return { name };
+    }
+  } catch (error) {
+    console.warn('[listenTogether] graphql name lookup failed', error);
+  }
+
+  // fallback. sp://auth/v2/token is gone, cosmos adds the token itself for web api urls now
+  try {
+    const id = isTrack(trackUri) ? trackUri.split(':')[2] : trackUri;
+    const data = await Spicetify.CosmosAsync.get(
+      `https://api.spotify.com/v1/${isEpisode ? 'episodes' : 'tracks'}/${id}`,
+    );
+    // cosmos hands back { code, error, message } instead of throwing, error is often ''
+    if (data?.code) return { error: `${data.code} ${data.message || ''}`.trim() };
+    return data;
+  } catch (error) {
+    return { error };
+  }
 }
 
 export function getCurrentTrackUri(): string {
-  return Spicetify.Platform.PlayerAPI._state.item?.uri || '';
+  // _state is undefined till the player sends its first update
+  return Spicetify.Platform.PlayerAPI._state?.item?.uri || '';
 }
 
 export function isListenableTrackType(trackType?: TrackType) {
@@ -95,12 +119,12 @@ export class SpotifyUtils {
       console.log(
         `Check loaded: ${getCurrentTrackUri()}===${trackUri}   ${
           Spicetify.Platform.PlayerAPI._state?.item?.name
-        }  ${!Spicetify.Platform.PlayerAPI._state.isBuffering}`,
+        }  ${!Spicetify.Platform.PlayerAPI._state?.isBuffering}`,
       );
       if (
         getCurrentTrackUri() === trackUri &&
         Spicetify.Platform.PlayerAPI._state?.item?.name &&
-        !Spicetify.Platform.PlayerAPI._state.isBuffering
+        !Spicetify.Platform.PlayerAPI._state?.isBuffering
       ) {
         if (this.loadedInterval) clearInterval(this.loadedInterval);
         if (this.timeoutLoadedCallback)

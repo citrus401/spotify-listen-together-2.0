@@ -16,8 +16,26 @@ import { Command } from '../interfaces';
 import { AddToQueueCommand } from '../commands/addToQueueCommand';
 
 export let ogPlayerAPI: any;
+
+const PATCHED_METHODS = [
+  'play',
+  'pause',
+  'resume',
+  'seekTo',
+  'skipToNext',
+  'skipToPrevious',
+  'addToQueue',
+  'removeFromQueue',
+  'clearQueue',
+];
+
+// spotify reads defaultPrevented off whatever emitSync returns, so blocking has to hand back this
+// instead of undefined or it throws
+const BLOCKED_EVENT = { defaultPrevented: true };
+
 export default class Patcher {
   private patched = false;
+  private subscribed = false;
   private lastData: any = null;
   constructor(public ltPlayer: LTPlayer) {}
 
@@ -43,46 +61,52 @@ export default class Patcher {
   }
 
   private setOGFunctions() {
-    const methods = [
-      'play',
-      'pause',
-      'resume',
-      'seekTo',
-      'skipToNext',
-      'skipToPrevious',
-      'addToQueue',
-      'removeFromQueue',
-      'clearQueue',
-    ];
+    // only keep originals from the first patch, a reconnect would grab our own wrappers otherwise
+    if (ogPlayerAPI) return;
 
-    ogPlayerAPI = methods.reduce((obj: { [key: string]: any }, method) => {
-      obj[method] = Spicetify.Platform.PlayerAPI[method].bind(
-        Spicetify.Platform.PlayerAPI,
-      );
-      return obj;
-    }, {});
+    ogPlayerAPI = PATCHED_METHODS.reduce(
+      (obj: { [key: string]: any }, method) => {
+        const fn = Spicetify.Platform.PlayerAPI[method];
+        // spotify renames stuff between versions, missing one shouldn't kill the whole extension
+        if (typeof fn === 'function') {
+          obj[method] = fn.bind(Spicetify.Platform.PlayerAPI);
+        } else {
+          console.warn(`[listenTogether] PlayerAPI.${method} is gone, skipping it`);
+        }
+        return obj;
+      },
+      {},
+    );
 
     // Manual patching for nested functions
-    ogPlayerAPI.emitSync =
-      Spicetify.Platform.PlayerAPI._events._emitter.emitSync.bind(
-        Spicetify.Platform.PlayerAPI._events._emitter,
-      );
+    const emitter = Spicetify.Platform.PlayerAPI._events?._emitter;
+    if (typeof emitter?.emitSync === 'function') {
+      ogPlayerAPI.emitSync = emitter.emitSync.bind(emitter);
+    } else {
+      console.warn('[listenTogether] player event emitter moved, the extra play/pause guard is off');
+    }
 
-    if (Spicetify.Platform.PlaybackAPI.setVolume) {
+    if (Spicetify.Platform.PlaybackAPI?.setVolume) {
       ogPlayerAPI.setVolume = (volume: number) => {
         Spicetify.Platform.PlaybackAPI.setVolume(volume);
       };
     }
   }
 
-  private subscribeToPlayerEvents() {
+  // called on load too, so listentogether/<server> links work before you ever connected
+  subscribeToPlayerEvents() {
+    // once per session, these stacked up on every reconnect before
+    if (this.subscribed) return;
+    this.subscribed = true;
+
     Spicetify.Player.addEventListener('songchange', (event) => {
       this.trackChangeHandler(event!.data);
     });
+    Spicetify.Platform.History.listen(this.historyChangeHandler);
   }
 
   private trackChangeHandler = (data: any) => {
-    if (!data) return;
+    if (!data || !this.patched) return;
 
     if (this.lastData?.item?.uri !== data?.item?.uri) {
       this.onTrackChanged.trigger(data?.item?.uri || '');
@@ -105,7 +129,7 @@ export default class Patcher {
     };
 
     for (const [key, handler] of Object.entries(handlers)) {
-      Spicetify.Platform.PlayerAPI[key] = handler;
+      if (ogPlayerAPI[key]) Spicetify.Platform.PlayerAPI[key] = handler;
     }
 
     if (ogPlayerAPI.emitSync) {
@@ -116,25 +140,12 @@ export default class Patcher {
     if (ogPlayerAPI.setVolume) {
       Spicetify.Platform.PlayerAPI.setVolume = this.setVolumeHandler;
     }
-
-    Spicetify.Platform.History.listen(this.historyChangeHandler);
   }
 
   private restorePlayerFunctions() {
-    const methods = [
-      'play',
-      'pause',
-      'resume',
-      'seekTo',
-      'skipToNext',
-      'skipToPrevious',
-      'addToQueue',
-      'removeFromQueue',
-      'clearQueue',
-    ];
-
-    methods.forEach((method) => {
-      Spicetify.Platform.PlayerAPI[method] = ogPlayerAPI[method];
+    PATCHED_METHODS.forEach((method) => {
+      if (ogPlayerAPI[method])
+        Spicetify.Platform.PlayerAPI[method] = ogPlayerAPI[method];
     });
 
     if (ogPlayerAPI.emitSync) {
@@ -149,9 +160,10 @@ export default class Patcher {
 
   private emitSyncHandler = (e: any, t: any) => {
     if (this.ltPlayer.client.connected && !this.ltPlayer.isHost) {
-      if (t?.action === 'play' && t?.options?.ltForced !== true) return;
-      if (t?.action === 'pause' && isTrackPaused()) return;
-      if (t?.action === 'resume' && !isTrackPaused()) return;
+      if (t?.action === 'play' && t?.options?.ltForced !== true)
+        return BLOCKED_EVENT;
+      if (t?.action === 'pause' && isTrackPaused()) return BLOCKED_EVENT;
+      if (t?.action === 'resume' && !isTrackPaused()) return BLOCKED_EVENT;
     }
     return ogPlayerAPI.emitSync(e, t);
   };

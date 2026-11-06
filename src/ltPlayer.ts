@@ -8,6 +8,7 @@ import {
   forcePlayTrack,
   getCurrentTrackUri,
   getTrackData,
+  getTrackProgress,
   getTrackType,
   isListenableTrackType,
   isTrackPaused,
@@ -18,6 +19,14 @@ import {
 } from './utils/spotifyUtils';
 
 const AD_CHECK_INTERVAL = 2000;
+// 150 is a guess, tune it. drift under this gets left alone, every correction is a seek and seeks hiccup
+const DRIFT_TOLERANCE = 150;
+// progress is prob off for a bit after a seek or resume, so no judging drift till it settles
+const SETTLE_TIME = 2000;
+const MAX_SEEK_LEAD = 1000;
+// near the end a correction could seek past it and skip the song
+const END_GUARD = 2000;
+
 export default class LTPlayer {
   client = new Client(this);
   patcher = new Patcher(this);
@@ -34,10 +43,15 @@ export default class LTPlayer {
   canChangeVolume = true;
   lastVolume: number | null = null;
 
-  constructor() {}
+  /** spotify takes a moment to actually play after a seek, so corrections aim this far ahead. learned, see onSyncPosition */
+  private seekLead = 0;
+  private correcting = false;
+  private settleUntil = 0;
+  private delayedResume: ReturnType<typeof setTimeout> | null = null;
 
-  init() {
-    this.patcher.patchAll();
+  // listeners live here and not in init(), init runs on every connect and they used to pile up
+  constructor() {
+    this.patcher.subscribeToPlayerEvents();
     this.patcher.trackChanged.on((trackUri) => {
       this.onSongChanged(trackUri!);
     });
@@ -45,6 +59,10 @@ export default class LTPlayer {
     setInterval(() => {
       this.resumeTrackIfAdPlaying();
     }, AD_CHECK_INTERVAL);
+  }
+
+  init() {
+    this.patcher.patchAll();
 
     // this.volumeChangeEnabled = !!ogPlayerAPI.setVolume;
 
@@ -130,13 +148,97 @@ export default class LTPlayer {
     }
   }
 
+  get syncOffset() {
+    return this.settingsManager.settings.syncOffset;
+  }
+
+  private resetSync() {
+    this.correcting = false;
+    this.settleUntil = Date.now() + SETTLE_TIME;
+    if (this.delayedResume) clearTimeout(this.delayedResume);
+    this.delayedResume = null;
+  }
+
   onUpdateSong(pause: boolean, milliseconds?: number) {
-    if (milliseconds != undefined) ogPlayerAPI.seekTo(milliseconds);
+    this.resetSync();
+
+    if (milliseconds == undefined) {
+      pause ? pauseTrack() : resumeTrack();
+      return;
+    }
 
     if (pause) {
+      ogPlayerAPI.seekTo(milliseconds);
       pauseTrack();
-    } else {
+      return;
+    }
+
+    const target = milliseconds + this.syncOffset;
+    if (target >= 0) {
+      ogPlayerAPI.seekTo(target);
       resumeTrack();
+    } else {
+      // can't seek before 0, so a negative offset at the start of a song = just start late
+      ogPlayerAPI.seekTo(0);
+      pauseTrack();
+      this.delayedResume = setTimeout(() => {
+        this.delayedResume = null;
+        resumeTrack();
+      }, -target);
+    }
+  }
+
+  /** milliseconds = where an in sync listener is right now, the server lines up the arrival time */
+  onSyncPosition(trackUri: string, milliseconds: number) {
+    if (!this.trackLoaded || this.delayedResume) return;
+    if (getCurrentTrackUri() !== trackUri || isTrackPaused()) return;
+    if (Date.now() < this.settleUntil) return;
+
+    const target = milliseconds + this.syncOffset;
+    if (target < 0 || target > Spicetify.Player.getDuration() - END_GUARD)
+      return;
+
+    const drift = getTrackProgress() - target;
+
+    if (this.correcting) {
+      // whatever's left after our last seek is how late spotify starts playing after one.
+      // half steps so one bad reading doesn't throw it way off
+      this.seekLead = Math.min(
+        MAX_SEEK_LEAD,
+        Math.max(0, this.seekLead - drift / 2),
+      );
+      this.correcting = false;
+    }
+
+    if (Math.abs(drift) < DRIFT_TOLERANCE) return;
+
+    console.log(
+      `[listenTogether] ${Math.round(drift)}ms off, seeking (lead ${Math.round(this.seekLead)}ms)`,
+    );
+    ogPlayerAPI.seekTo(target + this.seekLead);
+    this.correcting = true;
+    this.settleUntil = Date.now() + SETTLE_TIME;
+  }
+
+  setSyncOffset(offset: number) {
+    const delta = offset - this.syncOffset;
+    this.settingsManager.settings.syncOffset = offset;
+    this.settingsManager.saveSettings();
+
+    // move right away instead of waiting for the next sync, so you can hear the slider doing stuff
+    if (
+      delta !== 0 &&
+      this.client.connected &&
+      this.trackLoaded &&
+      !isTrackPaused() &&
+      isListenableTrackType()
+    ) {
+      // same lead as corrections, without it the seek stall ate most of a 300ms move in testing
+      this.correcting = true;
+      this.settleUntil = Date.now() + SETTLE_TIME;
+      ogPlayerAPI.seekTo(
+        Math.max(0, getTrackProgress() + delta + this.seekLead),
+      );
     }
   }
 
@@ -146,6 +248,7 @@ export default class LTPlayer {
 
     console.log(`Changed track to ${trackUri}`);
     this.currentLoadingTrack = trackUri;
+    this.resetSync();
 
     if (this.client.connected) {
       if (isListenableTrackType(getTrackType(trackUri))) {

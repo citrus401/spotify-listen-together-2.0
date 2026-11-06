@@ -69,3 +69,9 @@ $spice-text: white;
   transform: scale(1);
   border-color: var(--essential-subdued, #878787);
 }
+
+.lt-slider {
+  width: 100%;
+  accent-color: var(--spice-button, #1db954);
+  cursor: pointer;
+}

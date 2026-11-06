@@ -10,6 +10,8 @@ class Settings {
   login: string;
   password: string;
   autoConnect: boolean;
+  /** ms, + = play ahead of the room, - = behind. per person, never sent to the server */
+  syncOffset: number;
 
   constructor({
     settingsVersion = '1',
@@ -18,6 +20,7 @@ class Settings {
     login = '',
     password = '',
     autoConnect = false,
+    syncOffset = 0,
   }: Partial<Settings> = {}) {
     this.settingsVersion = settingsVersion;
     this.server = server;
@@ -25,6 +28,7 @@ class Settings {
     this.login = login;
     this.password = password;
     this.autoConnect = autoConnect;
+    this.syncOffset = Number.isFinite(syncOffset) ? syncOffset : 0;
   }
 }
 

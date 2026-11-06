@@ -66,6 +66,8 @@ export namespace Popup {
   interface TextProps {
     text: string;
     centered?: boolean;
+    /** room codes */
+    big?: boolean;
     bottomSpace?: number;
   }
 
@@ -80,6 +82,10 @@ export namespace Popup {
           style={{
             ...styles.flexRow,
             justifyContent: this.props.centered ? 'center' : 'flex-start',
+            textAlign: this.props.centered ? 'center' : 'left',
+            ...(this.props.big
+              ? { fontSize: '2rem', fontWeight: 700, letterSpacing: '0.15em', userSelect: 'text' }
+              : {}),
           }}
         >
           {this.props.text}
@@ -149,6 +155,56 @@ export namespace Popup {
               </span>
             </label>
           </div>
+        </div>
+      );
+    }
+  }
+
+  interface SliderProps {
+    label: string;
+    min: number;
+    max: number;
+    step: number;
+    defaultValue: number;
+    unit?: string;
+    /** only fires on release, every tick would mean a seek per pixel dragged */
+    onCommit: (value: number) => void;
+  }
+
+  export class Slider extends React.Component<SliderProps, { value: number }> {
+    constructor(props: SliderProps) {
+      super(props);
+      this.state = { value: props.defaultValue };
+    }
+
+    private commit = () => this.props.onCommit(this.state.value);
+
+    render() {
+      const { label, min, max, step, unit } = this.props;
+      const { value } = this.state;
+      return (
+        <div style={{ width: '100%' }}>
+          <div style={{ ...styles.flexRow, marginBottom: '6px' }}>
+            <span>{label}</span>
+            <span>
+              {value > 0 ? '+' : ''}
+              {value}
+              {unit || ''}
+            </span>
+          </div>
+          <input
+            className="lt-slider"
+            type="range"
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            onChange={(e) =>
+              this.setState({ value: Number(e.currentTarget.value) })
+            }
+            onPointerUp={this.commit}
+            onKeyUp={this.commit}
+          />
         </div>
       );
     }

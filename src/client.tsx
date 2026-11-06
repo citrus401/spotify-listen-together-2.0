@@ -1,88 +1,123 @@
-import { io, Socket } from 'socket.io-client';
+import { io } from 'socket.io-client';
 import LTPlayer from './ltPlayer';
 import React from 'react';
 import BottomInfo from './ui/bottomInfo';
 import {
   forcePlayTrack,
-  getCurrentTrackUri,
   getTrackType,
   isListenableTrackType,
 } from './utils/spotifyUtils';
+import { Transport } from './transport/transport';
+import { PeerHost, PeerJoin, cleanRoomCode } from './transport/peer';
+
+/** server = the old node server, host = this spotify is the room, join = someone else's spotify is */
+export type Mode =
+  | { kind: 'server'; address: string }
+  | { kind: 'host'; code: string }
+  | { kind: 'join'; code: string };
 
 export default class Client {
   connecting = false;
   connected = false;
-  socket: Socket | null = null;
-  server = '';
+  socket: Transport | null = null;
+  mode: Mode | null = null;
 
   constructor(public ltPlayer: LTPlayer) {
+    // free server hosts nap when idle, poking it keeps it awake. rooms don't need this
     setInterval(async () => {
-      if (this.connected) {
+      if (this.connected && this.mode?.kind === 'server') {
         try {
-          await fetch(this.server);
+          await fetch(this.mode.address);
         } catch {}
       }
     }, 5 * 60_000);
   }
 
+  get roomCode() {
+    return this.mode && this.mode.kind !== 'server' ? this.mode.code : null;
+  }
+
+  private get label() {
+    if (!this.mode) return '';
+    if (this.mode.kind === 'server') return this.mode.address;
+    if (this.mode.kind === 'host') return `your room ${this.mode.code}`;
+    return `room ${this.mode.code}`;
+  }
+
   connect(server?: string) {
     if (!server) server = this.ltPlayer.settingsManager.settings.server;
-
-    if (getCurrentTrackUri() != '') {
-      forcePlayTrack('');
-      setTimeout(() => this.connect(server), 100);
-      return;
-    }
-
-    this.server = server;
-
-    this.connecting = true;
-    this.ltPlayer.ui.renderBottomInfo(
-      <BottomInfo server={server} loading={true} />,
-    );
-    // this.ltPlayer.ui.menuItems.joinServer?.setName("Leave the server")
-
-    this.socket = io(server, {
+    // this used to clear the player with play(''). spotify 1.3 throws on that, reloads your last song
+    // and autoplays the next one, so you'd sit in the room playing your own stuff. onLogin pausing is enough,
+    // the server sends new listeners the room's song anyway
+    const socket = io(server, {
       secure: true,
       reconnection: true,
       reconnectionAttempts: 10,
       timeout: 5000,
       randomizationFactor: 0.5,
     });
+    this.start({ kind: 'server', address: server }, socket as unknown as Transport);
+  }
 
-    this.socket.on('connect', () => {
-      this.ltPlayer.ui.renderBottomInfo(<BottomInfo server={server!} />);
+  /** reuse a code when reconnecting so friends don't need a new one */
+  hostRoom(code?: string) {
+    const host = new PeerHost(this.ltPlayer.version, code);
+    this.start({ kind: 'host', code: host.code }, host.self);
+    return host.code;
+  }
+
+  joinRoom(code: string) {
+    const clean = cleanRoomCode(code);
+    this.start({ kind: 'join', code: clean }, new PeerJoin(clean));
+  }
+
+  reconnect() {
+    const mode = this.mode;
+    if (!mode) return this.connect();
+    if (mode.kind === 'server') this.connect(mode.address);
+    else if (mode.kind === 'host') this.hostRoom(mode.code);
+    else this.joinRoom(mode.code);
+  }
+
+  private start(mode: Mode, transport: Transport) {
+    this.mode = mode;
+    this.socket = transport;
+    this.connecting = true;
+    this.connected = false;
+    this.ltPlayer.ui.renderBottomInfo(<BottomInfo server={this.label} loading={true} />);
+
+    // a transport we already dropped can still fire stuff (socket.io retries), ignore anything not current
+    const on = (event: string, handler: (...args: any[]) => void) =>
+      transport.on(event, (...args: any[]) => {
+        if (this.socket === transport) handler(...args);
+      });
+
+    on('connect', () => {
+      this.ltPlayer.ui.renderBottomInfo(<BottomInfo server={this.label} />);
       this.connecting = false;
       this.connected = true;
       this.ltPlayer.isHost = false;
-      this.socket!.emit(
+      // the callback is socket.io's version check, rooms answer with versionMismatch instead
+      transport.emit(
         'login',
         this.ltPlayer.settingsManager.settings.name,
         this.ltPlayer.version,
-        (versionRequirements: string) => {
-          this.socket?.disconnect();
-          setTimeout(
-            () =>
-              this.ltPlayer.ui.windowMessage(
-                `Your Spotify Listen Together's version isn't compatible with the server's version. Consider switching to a version that meets these requirements: "${versionRequirements}".`,
-              ),
-            1,
-          );
-        },
+        (versionRequirements: string) => this.versionMismatch(versionRequirements),
       );
 
       // Initialize ltPlayer (patching, etc.)
       this.ltPlayer.init();
       this.ltPlayer.onLogin();
 
-      // Try to request host if password is set
+      // host passwords are a server thing, in a room the owner just gets asked
       const password = this.ltPlayer.settingsManager.settings.password;
-      if (password != '') {
-        this.socket!.emit('requestHost', password);
+      if (mode.kind === 'server' && password != '') {
+        transport.emit('requestHost', password);
       }
     });
 
-    this.socket.onAny((ev: string, ...args: any[]) => {
+    transport.onAny((ev: string, ...args: any[]) => {
+      if (this.socket !== transport) return;
       const formattedArgs = args.map((arg) => {
         if (typeof arg === 'object' && arg !== null) {
           return JSON.stringify(arg, null, 2);
@@ -99,100 +134,125 @@ export default class Client {
       console.log(`Receiving event "${ev}" with args: ${argsString}`);
     });
 
-    this.socket.on('changeSong', (trackUri: string) => {
+    on('changeSong', (trackUri: string) => {
       if (isListenableTrackType(getTrackType(trackUri)))
         this.ltPlayer.onChangeSong(trackUri);
     });
 
-    this.socket.on('updateSong', (pause: boolean, milliseconds: number) => {
+    on('updateSong', (pause: boolean, milliseconds: number) => {
       if (isListenableTrackType())
         this.ltPlayer.onUpdateSong(pause, milliseconds);
     });
 
-    this.socket.on('bottomMessage', (message: string) => {
+    on('syncPosition', (trackUri: string, milliseconds: number) => {
+      if (isListenableTrackType())
+        this.ltPlayer.onSyncPosition(trackUri, milliseconds);
+    });
+
+    on('bottomMessage', (message: string) => {
       this.ltPlayer.ui.bottomMessage(message);
     });
 
-    this.socket.on('windowMessage', (message: string) => {
+    on('windowMessage', (message: string) => {
       this.ltPlayer.ui.windowMessage(message);
     });
 
-    this.socket.on('listeners', (clients: any) => {
+    on('listeners', (clients: any) => {
       this.ltPlayer.ui.renderBottomInfo(
-        <BottomInfo server={server!} listeners={clients} />,
+        <BottomInfo server={this.label} listeners={clients} />,
       );
     });
 
-    this.socket.on('isHost', (isHost: boolean) => {
+    on('isHost', (isHost: boolean) => {
       if (isHost != this.ltPlayer.isHost) {
         this.ltPlayer.isHost = isHost;
         if (isHost) {
-          // this.ltPlayer.ui.menuItems.requestHost?.setName("Cancel hosting");
           this.ltPlayer.ui.bottomMessage('You are now a host.');
         } else {
-          // this.ltPlayer.ui.menuItems.requestHost?.setName("Request host");
           this.ltPlayer.ui.bottomMessage('You are no longer a host.');
         }
       }
     });
 
-    this.socket.on(
-      'songRequested',
-      (trackUri: string, trackName: string, fromListener: string) => {
-        this.ltPlayer.ui.songRequestPopup(trackName, fromListener, () => {
-          forcePlayTrack(trackUri);
-        });
-      },
-    );
+    on('songRequested', (trackUri: string, trackName: string, fromListener: string) => {
+      this.ltPlayer.ui.songRequestPopup(trackName, fromListener, () => {
+        forcePlayTrack(trackUri);
+      });
+    });
+
+    on('hostRequested', (name: string, memberId: string) => {
+      this.ltPlayer.ui.hostRequestPopup(name, () => transport.emit('grantHost', memberId));
+    });
 
     // Synchronize the queue on join
-    this.socket.on('queueUpdate', (queue: Spicetify.ContextTrack[]) => {
+    on('queueUpdate', (queue: Spicetify.ContextTrack[]) => {
       console.dir(`Queue updated: ${queue || 'empty'}`, { depth: null });
       this.ltPlayer.onQueueUpdate(queue);
     });
 
-    this.socket.on('addToQueue', (items: Spicetify.ContextTrack[]) => {
+    on('addToQueue', (items: Spicetify.ContextTrack[]) => {
       this.ltPlayer.onAddToQueue(items);
     });
 
-    this.socket.on('removeFromQueue', (items: Spicetify.ContextTrack[]) => {
+    on('removeFromQueue', (items: Spicetify.ContextTrack[]) => {
       this.ltPlayer.onRemoveFromQueue(items);
     });
 
-    this.socket.on('clearQueue', () => {
+    on('clearQueue', () => {
       this.ltPlayer.onClearQueue();
     });
 
-    this.socket.on('connect_error', () => {
+    on('versionMismatch', (version: string) => this.versionMismatch(`${version} (major.minor)`));
+
+    on('roomError', (message: string) => {
+      this.disconnect(false);
+      this.ltPlayer.ui.windowMessage(message);
+    });
+
+    on('connect_error', () => {
       console.log('Connection error.');
     });
 
-    this.socket.on('disconnect', (reason) => {
+    on('disconnect', (reason: string) => {
       console.log(`Disconnected: ${reason}`);
-      if (reason === 'io server disconnect') {
-        this.connect(this.server);
-      } else if (reason === 'io client disconnect') {
+      if (mode.kind === 'server' && reason === 'io server disconnect') {
+        this.connect(mode.address);
+      } else if (mode.kind !== 'server' || reason === 'io client disconnect') {
+        // socket.io retries the rest itself, a room has nobody to retry to
         this.disconnect();
       }
     });
 
-    this.socket.on('error', () => {
+    on('error', () => {
       console.log('Error connecting to the server.');
-      this.disconnect();
-      this.ltPlayer.ui.windowMessage(`Couldn't connect to "${server}".`);
+      this.disconnect(false);
+      this.ltPlayer.ui.windowMessage(`Couldn't connect to "${this.label}".`);
     });
   }
 
-  disconnect() {
-    this.socket?.disconnect();
+  private versionMismatch(requirements: string) {
+    this.disconnect(false);
+    setTimeout(
+      () =>
+        this.ltPlayer.ui.windowMessage(
+          `Your Spotify Listen Together's version isn't compatible with this one. It needs: "${requirements}".`,
+        ),
+      1,
+    );
+  }
+
+  /** popup = the "disconnected, reconnect?" one. off when you left on purpose or there's a better message */
+  disconnect(popup = true) {
+    const socket = this.socket;
+    if (!socket) return;
+    // nulled first so the disconnect event this triggers gets ignored instead of landing back here
     this.socket = null;
     this.connected = false;
     this.ltPlayer.isHost = false;
     this.connecting = false;
+    socket.disconnect();
     this.ltPlayer.unload();
-    // this.ltPlayer.ui.menuItems.joinServer?.setName("Join a server")
-    // this.ltPlayer.ui.menuItems.requestHost?.setName("Request host");
     this.ltPlayer.ui.renderBottomInfo(<BottomInfo server={''} />);
-    this.ltPlayer.ui.disconnectedPopup();
+    if (popup) this.ltPlayer.ui.disconnectedPopup();
   }
 }
