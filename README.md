@@ -26,10 +26,13 @@ Listen Together keeps everyone's Spotify on the same song at the same moment. Ev
 account and their own device, the extension handles the timing.
 
 - **Host a room in one click.** Friends join with a 6 letter code. No server, no port forwarding.
-- **Tight sync.** Play, pause and seek happen at the same moment for everyone, and small drift gets fixed quietly.
+- **Tight sync.** Everyone stays within about 10 ms of the host. Play, pause and seek land at the same moment for
+  everyone, and drift past 15 ms gets fixed on its own.
 - **Songs change live.** No pause and restart between songs, and crossfade works.
 - **Playlists and albums carry over**, so skip, previous and the playlist view work like normal.
 - **Anything the host does carries over**: media keys, the mini player, controlling Spotify from your phone, the sleep timer.
+- **One queue for everyone.** Everyone's queue shows the host's, and hosts can add to it from their own Spotify.
+- **See the delay.** The room panel shows how far each person is from the host, in milliseconds.
 - **Sync offset** per person, for Bluetooth headphones and other delay Spotify can't see.
 - **Updates itself** from this repo. It can just tell you, update automatically, or stay off.
 
@@ -80,11 +83,15 @@ Press the **Listen Together** button in the top bar to open the panel.
 Press **Host a room**. The panel shows your room's 6 letter code with a copy button, send it to your friends.
 Your name and picture come from your Spotify profile, nothing to fill in.
 
-Your Spotify is the room, so keep it open while you listen. Everyone follows your playback.
+Your Spotify is the room, so keep it open while you listen. Everyone follows your playback and your queue.
 
 <p align="center">
   <img src="docs/panel-room.png" alt="A room with its code, who's listening, and who's host" width="440">
 </p>
+
+Under each name the panel shows how far that person is from you, like "12 ms behind". It's measured on their
+end. Anything past 15 ms turns amber and gets lined up again on its own. **Sync** next to the list lines everyone
+up again right away (or just you, if you're not a host).
 
 While you're in a room, a chip in the player bar shows who's listening. Hover it to see the room code, click it to open the panel.
 
@@ -104,6 +111,11 @@ to the hosts as a request.
 
 For hosts everything works like normal Spotify: playlists, albums, the queue, shuffle, repeat, crossfade, skip,
 previous, media keys, and controlling Spotify from your phone.
+
+### The queue
+
+The room's queue is the owner's Spotify queue, and everyone's queue shows the same songs. Hosts can add, remove
+and clear from their own Spotify and it changes for everyone. Reordering only works from the owner's Spotify.
 
 ### Settings
 
@@ -164,10 +176,13 @@ Or host it on Render:
 - The host's Spotify runs the room. Friends connect straight to it over WebRTC.
 - Public [Nostr](https://nostr.com/) relays are only used for the two sides to find each other. The handshake is
   encrypted with the room code, and nothing else goes through them.
-- Friends match their clock with the host's, and the host sends its position with a timestamp every second, so
+- Friends match their clock with the host's, and the host sends its position with a timestamp twice a second, so
   network delay doesn't affect the sync.
 - Play, pause and seek get scheduled for a moment just past everyone's network delay, so everyone does them at the
   same time.
+- Lining someone up is a very short pause, a seek while paused, and playing again on the exact moment. Every jump
+  gets checked once Spotify reports where it really landed, and tried again if it's more than 10 ms off. Songs that
+  change on their own aren't touched, so crossfade works.
 
 ## Todo
 

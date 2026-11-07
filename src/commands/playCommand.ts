@@ -11,6 +11,8 @@ export class PlayCommand implements Command {
   ) {}
 
   async execute(ogPlay: Function) {
+    // our own forced plays are the room moving us, not you picking
+    if (this.options?.ltForced !== true) this.ltPlayer.songPickedAt = Date.now();
     this.ltPlayer.muteBeforePlay();
     ogPlay(this.uri, this.context, this.options);
   }

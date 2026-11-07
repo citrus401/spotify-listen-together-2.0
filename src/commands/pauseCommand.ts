@@ -1,6 +1,5 @@
 import { Command } from '../interfaces';
 import LTPlayer from '../ltPlayer';
-import { getTrackProgress } from '../utils/spotifyUtils';
 
 export class PauseCommand implements Command {
   constructor(private ltPlayer: LTPlayer) {}
@@ -8,7 +7,7 @@ export class PauseCommand implements Command {
   async execute(ogPause: Function) {
     // rooms: don't do it here and now, the room schedules it so everyone does it at the same moment
     if (this.ltPlayer.liveRoom) {
-      this.ltPlayer.requestUpdateSong(true, getTrackProgress());
+      this.ltPlayer.requestUpdateSong(true, this.ltPlayer.progress());
       return;
     }
     await ogPause();

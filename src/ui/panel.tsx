@@ -37,6 +37,8 @@ export interface PanelApi {
   leave(): void;
   requestHost(password?: string): void;
   stopHosting(): void;
+  /** hosts line everyone up again, anyone else just themselves */
+  resync(): void;
   copy(text: string): Promise<boolean>;
   setName(name: string): void;
   setOffset(ms: number): void;
@@ -306,6 +308,41 @@ function ConnectingView({ api, st }: { api: PanelApi; st: PanelState }) {
   );
 }
 
+// PRECISE.tolerance in ltPlayer. past this a playing song gets lined up again, so it's worth flagging
+const SYNC_FIXES_AT = 15;
+
+/** what's under someone's name: how far off they are, by their own reading. the owner is what everyone matches */
+function syncLine(p: Listener) {
+  if (p.owner) return { text: 'Sets the timing', off: false };
+  if (typeof p.sync !== 'number') return null;
+  const ms = Math.abs(p.sync);
+  return { text: ms === 0 ? 'Spot on' : `${ms} ms ${p.sync < 0 ? 'behind' : 'ahead'}`, off: ms >= SYNC_FIXES_AT };
+}
+
+/** a short cooldown, every press is a tiny pause for whoever gets lined up */
+function SyncButton({ label, hint, onSync }: { label: string; hint: string; onSync: () => void }) {
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => {
+    if (!busy) return;
+    const t = setTimeout(() => setBusy(false), 3000);
+    return () => clearTimeout(t);
+  }, [busy]);
+  return (
+    <button
+      className="lt-link lt-section__action"
+      title={hint}
+      disabled={busy}
+      onClick={() => {
+        setBusy(true);
+        onSync();
+      }}
+    >
+      <Icons.sync size={14} />
+      {busy ? 'Syncing' : label}
+    </button>
+  );
+}
+
 function sortPeople(people: Listener[]) {
   const rank = (p: Listener) => (p.owner ? 0 : p.isHost ? 1 : 2);
   return [...people].sort((a, b) => rank(a) - rank(b));
@@ -354,24 +391,39 @@ function RoomView({ api, st, onSettings }: { api: PanelApi; st: PanelState; onSe
       <div className="lt-section">
         <span>Listening</span>
         <span className="lt-section__count">{people.length}</span>
+        {!isServer && (
+          <SyncButton
+            label={st.isHost ? 'Sync everyone' : 'Sync'}
+            hint={st.isHost ? 'Line everyone up with the host again' : 'Line yourself up with the host again'}
+            onSync={() => api.resync()}
+          />
+        )}
       </div>
       <ul className="lt-people">
-        {people.map((p, i) => (
-          <li key={p.id || `${p.name}${i}`} className="lt-person">
-            <Avatar name={p.name} src={p.avatar} size={32} />
-            <span className="lt-person__name">{p.name}</span>
-            <span className="lt-person__badges">
-              {p.watchingAD && <Badge tone="amber">On an ad</Badge>}
-              {p.isHost && (
-                <Badge tone="green">
-                  <Icons.crown size={12} />
-                  Host
-                </Badge>
-              )}
-              {isMe(p) && <Badge>You</Badge>}
-            </span>
-          </li>
-        ))}
+        {people.map((p, i) => {
+          const sync = syncLine(p);
+          return (
+            <li key={p.id || `${p.name}${i}`} className="lt-person">
+              <Avatar name={p.name} src={p.avatar} size={32} />
+              <span className="lt-person__text">
+                <span className="lt-person__name">{p.name}</span>
+                {sync && (
+                  <span className={`lt-person__sync${sync.off ? ' lt-person__sync--off' : ''}`}>{sync.text}</span>
+                )}
+              </span>
+              <span className="lt-person__badges">
+                {p.watchingAD && <Badge tone="amber">On an ad</Badge>}
+                {p.isHost && (
+                  <Badge tone="green">
+                    <Icons.crown size={12} />
+                    Host
+                  </Badge>
+                )}
+                {isMe(p) && <Badge>You</Badge>}
+              </span>
+            </li>
+          );
+        })}
       </ul>
 
       {askingPassword && (

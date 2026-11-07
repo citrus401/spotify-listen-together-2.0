@@ -28,6 +28,8 @@ interface Member {
   resyncedAt: number;
   /** spotify profile picture, only ever a spotify image url */
   avatar?: string;
+  /** ms their playback is off from the owner's, their own reading (+ = ahead). unset = not measuring right now */
+  sync?: number;
 }
 
 // whatever a member sends ends up as an <img src> on everyone's screen, so spotify's own image hosts only
@@ -44,13 +46,17 @@ export type Reference = () => {
   playing: boolean;
   /** what the owner's spotify plays next, friends queue it so their song changes line up (crossfade) */
   nextUri?: string;
+  /** what the owner's spotify plays next, in order (what they queued, then the playlist's next songs) */
+  queue?: string[];
+  /** false = spotify's position is known to be off right now (just after a song start or a seek), don't line up to it */
+  settled?: boolean;
 } | null;
 
 // same numbers the node server uses
 const MAX_DELAY = 5000;
 const SYNC_INTERVAL = 3000;
-// rooms with a reference send timestamped positions, cheap enough to do every second for tighter sync
-const REFERENCE_SYNC_INTERVAL = 1000;
+// rooms with a reference send timestamped positions. twice a second, so a median of a few readings is fresh
+const REFERENCE_SYNC_INTERVAL = 500;
 // a client that can't play the room's song (region locked etc) would get told to every time it reports
 const RESYNC_COOLDOWN = 5000;
 // play/pause/seek in rooms get scheduled this far past the slowest friend's one way delay, so everyone does
@@ -65,6 +71,15 @@ const EXTERNAL_SEEK = 1500;
 
 function isListenable(uri: string) {
   return uri.startsWith('spotify:track:') || uri.startsWith('spotify:episode:');
+}
+
+// queue changes come in as spotify items. only the uri matters, and local files can't play for anyone else
+const MAX_QUEUE = 50;
+function queueItems(items: any[]) {
+  return items
+    .filter((t) => t && typeof t.uri === 'string' && isListenable(t.uri))
+    .slice(0, MAX_QUEUE)
+    .map((t) => ({ uri: t.uri as string }));
 }
 
 export function versionsCompatible(a: string, b: string) {
@@ -90,6 +105,8 @@ export default class RoomHost {
   /** a scheduled action is still landing, the watcher and syncs keep out till then */
   private pendingUntil = 0;
   private queue: ContextTrack[] = [];
+  /** last owner queue friends were sent, null till it's been read once */
+  private ownerQueue: string[] | null = null;
   private syncTimer: ReturnType<typeof setInterval>;
 
   /**
@@ -159,7 +176,8 @@ export default class RoomHost {
         this.checkListenerHasAD();
         if (!this.locked) this.checkDesynchronizedListeners();
         this.sendListeners();
-        this.io.send(id, 'queueUpdate', this.queue);
+        if (!this.reference) this.io.send(id, 'queueUpdate', this.queue);
+        else if (id !== this.ownerId && this.ownerQueue) this.io.send(id, 'queueSync', this.ownerQueue);
         return;
       }
 
@@ -228,15 +246,27 @@ export default class RoomHost {
           .forEach((h) => this.io.send(h.id, 'songRequested', args[0], args[1], m.name));
         return;
 
-      // the node server let anyone touch the queue, only the client checked. hosts only here
+      // the node server let anyone touch the queue, only the client checked. hosts only here.
+      // with a reference the owner's real queue is the room's queue, so changes go to their spotify and
+      // everyone gets the result from watchOwner
       case 'addToQueue':
         if (!m.isHost || !Array.isArray(args[0])) return;
+        if (this.reference) {
+          const items = queueItems(args[0]);
+          if (items.length) this.io.send(this.ownerId, 'addToQueue', items);
+          return;
+        }
         this.queue.push(...args[0]);
         this.emitToListeners('addToQueue', [...args[0]]);
         return;
 
       case 'removeFromQueue': {
         if (!m.isHost || !Array.isArray(args[0])) return;
+        if (this.reference) {
+          const items = queueItems(args[0]);
+          if (items.length) this.io.send(this.ownerId, 'removeFromQueue', items);
+          return;
+        }
         const removed: ContextTrack[] = [];
         for (const t of args[0] as ContextTrack[]) {
           const i = this.queue.findIndex((q) => q.uri === t.uri);
@@ -248,6 +278,10 @@ export default class RoomHost {
 
       case 'clearQueue':
         if (!m.isHost) return;
+        if (this.reference) {
+          this.io.send(this.ownerId, 'clearQueue');
+          return;
+        }
         this.queue = [];
         this.emitToListeners('clearQueue');
         return;
@@ -260,6 +294,42 @@ export default class RoomHost {
         const { avatar, name } = args[0] || {};
         m.avatar = typeof avatar === 'string' && AVATAR_URL.test(avatar) ? avatar : undefined;
         if (typeof name === 'string' && name.trim()) m.name = name.trim().slice(0, 40);
+        this.sendListeners();
+        return;
+      }
+
+      // a friend's report on how a realign went, only the owner gets it (in the console)
+      case 'syncDebug': {
+        const d = args[0];
+        if (id === this.ownerId || !d || typeof d !== 'object') return;
+        const clean: Record<string, string | number | boolean> = {};
+        for (const k of ['label', 'off', 'resumeLag', 'parkLag', 'reportFix', 'hidden', 'codec', 'bitrate', 'timeline']) {
+          const v = d[k];
+          if (typeof v === 'number' && Number.isFinite(v)) clean[k] = Math.round(v);
+          else if (typeof v === 'boolean') clean[k] = v;
+          // the timeline's up to 16 "ms:off" pairs
+          else if (typeof v === 'string') clean[k] = v.slice(0, k === 'timeline' ? 200 : 40);
+        }
+        this.io.send(this.ownerId, 'syncDebug', m.name, clean);
+        return;
+      }
+
+      // the sync button: hosts get everyone to line up again right now
+      case 'resyncAll':
+        if (!m.isHost) return;
+        this.listeners().forEach((l) => {
+          if (l.id !== this.ownerId) this.io.send(l.id, 'resync');
+        });
+        return;
+
+      // a friend's own drift reading, so the room panel can show how far off everyone is
+      case 'syncStat': {
+        const [ms] = args;
+        // null = they stopped measuring (paused, loading, a different song). anything else weird gets dropped
+        const sync = typeof ms === 'number' && Number.isFinite(ms) && Math.abs(ms) < MAX_DELAY ? Math.round(ms) : undefined;
+        if (ms !== null && sync === undefined) return;
+        if (id === this.ownerId || m.sync === sync) return;
+        m.sync = sync;
         this.sendListeners();
         return;
       }
@@ -306,6 +376,7 @@ export default class RoomHost {
       watchingAD: l.trackUri.includes('spotify:ad:'),
       avatar: l.avatar,
       owner: l.id === this.ownerId,
+      sync: l.sync,
     }));
     if (to) this.io.send(to, 'listeners', list);
     else this.members.forEach((m) => this.io.send(m.id, 'listeners', list));
@@ -333,8 +404,9 @@ export default class RoomHost {
       const ref = this.reference();
       // no clock fallback here. if the owner isn't playing the room's song right now there's nothing true to send
       if (!ref || !ref.playing || ref.trackUri !== this.trackUri) return;
+      // settled goes last so older versions just ignore it
       this.listeners().forEach((l) =>
-        this.io.send(l.id, 'syncPosition', this.trackUri, ref.position, at, ref.nextUri || ''),
+        this.io.send(l.id, 'syncPosition', this.trackUri, ref.position, at, ref.nextUri || '', ref.settled !== false),
       );
       return;
     }
@@ -361,10 +433,12 @@ export default class RoomHost {
     buttons: media keys, the mini player, their phone as a remote, the sleep timer
   */
   private watchOwner() {
+    const ref = this.reference?.();
+    // before the bail outs, queueing stuff while paused or between songs should still go out
+    this.watchQueue(ref);
     if (this.locked || this.loadingTrack !== null || !isListenable(this.trackUri)) return;
     const now = Date.now();
     if (now < this.pendingUntil) return;
-    const ref = this.reference?.();
     if (!ref || ref.trackUri !== this.trackUri) return;
 
     if (ref.playing === this.paused) {
@@ -380,6 +454,18 @@ export default class RoomHost {
       this.milliseconds = ref.position;
       this.millisecondsLastUpdate = now;
     }
+  }
+
+  /** the owner's queue changed (queued, removed, played through, dragged around): everyone else gets the new one */
+  private watchQueue(ref: ReturnType<Reference> | undefined) {
+    if (!Array.isArray(ref?.queue)) return;
+    const queue = ref!.queue.filter((uri) => typeof uri === 'string' && isListenable(uri)).slice(0, MAX_QUEUE);
+    const last = this.ownerQueue;
+    if (last && queue.length === last.length && queue.every((uri, i) => uri === last[i])) return;
+    this.ownerQueue = queue;
+    this.listeners().forEach((l) => {
+      if (l.id !== this.ownerId) this.io.send(l.id, 'queueSync', this.ownerQueue);
+    });
   }
 
   private updateSong(pause: boolean, milliseconds: number) {

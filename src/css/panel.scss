@@ -386,6 +386,15 @@ $lt-font: var(--encore-body-font-stack, CircularSp, sans-serif);
   font-weight: 700;
   margin-bottom: -8px;
 }
+.lt-section__action {
+  margin-left: auto;
+  font-size: 12px;
+  &:disabled {
+    cursor: default;
+    color: $lt-sub;
+    opacity: 0.7;
+  }
+}
 .lt-section__count {
   min-width: 20px;
   height: 20px;
@@ -415,13 +424,25 @@ $lt-font: var(--encore-body-font-stack, CircularSp, sans-serif);
     background: $lt-tint;
   }
 }
-.lt-person__name {
+.lt-person__text {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.lt-person__name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 600;
+}
+.lt-person__sync {
+  font-size: 12px;
+  color: $lt-sub;
+  font-variant-numeric: tabular-nums;
+}
+.lt-person__sync--off {
+  color: $lt-amber;
 }
 .lt-person__badges {
   display: flex;

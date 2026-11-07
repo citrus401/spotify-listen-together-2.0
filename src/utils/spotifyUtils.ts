@@ -46,6 +46,21 @@ export function getCurrentTrackUri(): string {
   return Spicetify.Platform.PlayerAPI._state?.item?.uri || '';
 }
 
+/** what you queued yourself, in order. the playlist's upcoming songs are "context" and don't count */
+export function getQueuedItems(): { uri: string; uid?: string }[] {
+  const next: any[] = Spicetify.Platform.PlayerAPI._state?.nextItems || [];
+  return next.filter((i) => i?.provider === 'queue' && typeof i.uri === 'string');
+}
+
+/** what plays next, in order: what you queued, then the playlist's upcoming songs (in your shuffle order) */
+export function getUpcomingUris(count: number): string[] {
+  const next: any[] = Spicetify.Platform.PlayerAPI._state?.nextItems || [];
+  return next
+    .map((i) => i?.uri)
+    .filter((uri) => typeof uri === 'string' && (uri.startsWith('spotify:track:') || uri.startsWith('spotify:episode:')))
+    .slice(0, count);
+}
+
 export function isListenableTrackType(trackType?: TrackType) {
   if (trackType === undefined) trackType = getTrackType();
 

@@ -8,6 +8,8 @@ export type Listener = {
   id?: string;
   avatar?: string;
   owner?: boolean;
+  /** ms off from the owner (+ = ahead), measured on their end. missing = not measuring, or an older version */
+  sync?: number;
 };
 
 /** tiny "something changed, re-render" signal so the chip and the panel stay live without a state lib */

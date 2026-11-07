@@ -8,7 +8,8 @@ export class AddToQueueCommand implements Command {
   ) {}
 
   async execute(ogAddToQueue: Function) {
-    //ogAddToQueue(this.items);
+    // your own room: it's your queue, so it just happens and the room shares it from there
+    if (this.ltPlayer.ownsRoom) return ogAddToQueue();
     this.ltPlayer.addToQueue(this.items);
   }
 

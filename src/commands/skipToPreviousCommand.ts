@@ -6,6 +6,7 @@ export class SkipToPreviousCommand implements Command {
 
   async execute(ogSkipToPrevious: Function) {
     if (Spicetify.Player.getProgress() <= 3000) {
+      this.ltPlayer.songPickedAt = Date.now();
       ogSkipToPrevious(this.e);
     } else {
       Spicetify.Player.seek(0);

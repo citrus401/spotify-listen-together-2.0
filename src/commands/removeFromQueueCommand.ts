@@ -8,7 +8,7 @@ export class RemoveFromQueueCommand implements Command {
   ) {}
 
   async execute(ogRemoveFromQueue: Function) {
-    //ogRemoveFromQueue(this.items);
+    if (this.ltPlayer.ownsRoom) return ogRemoveFromQueue();
     this.ltPlayer.removeFromQueue(this.items);
   }
 

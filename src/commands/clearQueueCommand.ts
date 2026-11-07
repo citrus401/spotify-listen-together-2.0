@@ -5,7 +5,7 @@ export class ClearQueueCommand implements Command {
   constructor(private ltPlayer: LTPlayer) {}
 
   async execute(ogClearQueue: Function) {
-    //ogClearQueue();
+    if (this.ltPlayer.ownsRoom) return ogClearQueue();
     this.ltPlayer.clearQueue();
   }
 

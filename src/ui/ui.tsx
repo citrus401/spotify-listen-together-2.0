@@ -186,6 +186,11 @@ export default class UI implements PanelApi {
     this.ltPlayer.client.socket?.emit('cancelHost');
   }
 
+  resync() {
+    this.ltPlayer.resync();
+    this.bottomMessage(this.ltPlayer.isHost ? 'Lining everyone up with the host.' : 'Lining you up with the host.');
+  }
+
   async copy(text: string) {
     // missing from the spicetify typings, exists at runtime though
     const clipboard = (Spicetify.Platform as any).ClipboardAPI;

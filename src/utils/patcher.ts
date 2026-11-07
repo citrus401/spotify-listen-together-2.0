@@ -153,6 +153,9 @@ export default class Patcher {
   }
 
   private emitSyncHandler = (e: any, t: any) => {
+    // our own sync commands go through. with spotify minimized its state can lag, and a realign's resume got
+    // blocked as if it was a stray media key, leaving the friend paused
+    if (this.ltPlayer.ownCommand > 0) return ogPlayerAPI.emitSync(e, t);
     if (this.ltPlayer.client.connected && !this.ltPlayer.isHost) {
       if (t?.action === 'play' && t?.options?.ltForced !== true)
         return BLOCKED_EVENT;
@@ -208,24 +211,25 @@ export default class Patcher {
     };
   };
 
+  // these pass their args along like play does. handing over the bare function queued nothing when it ran
   private addToQueueHandler = (ogAddToQueue: any) => {
-    return async (items: Spicetify.ContextTrack[]): Promise<void> => {
+    return async (items: Spicetify.ContextTrack[], ...rest: any[]): Promise<void> => {
       const command = new AddToQueueCommand(this.ltPlayer, items);
-      this.restrictAccess(ogAddToQueue, command);
+      this.restrictAccess(() => ogAddToQueue(items, ...rest), command);
     };
   };
 
   private removeFromQueueHandler = (ogRemoveFromQueue: any) => {
-    return async (items: Spicetify.ContextTrack[]): Promise<void> => {
+    return async (items: Spicetify.ContextTrack[], ...rest: any[]): Promise<void> => {
       const command = new RemoveFromQueueCommand(this.ltPlayer, items);
-      this.restrictAccess(ogRemoveFromQueue, command);
+      this.restrictAccess(() => ogRemoveFromQueue(items, ...rest), command);
     };
   };
 
   private clearQueueHandler = (ogClearQueue: any) => {
-    return async (): Promise<void> => {
+    return async (...args: any[]): Promise<void> => {
       const command = new ClearQueueCommand(this.ltPlayer);
-      this.restrictAccess(ogClearQueue, command);
+      this.restrictAccess(() => ogClearQueue(...args), command);
     };
   };
 

@@ -5,6 +5,7 @@ export class SkipToNextCommand implements Command {
   constructor(private ltPlayer: LTPlayer, private e: any) {}
 
   async execute(ogSkipToNext: Function) {
+    this.ltPlayer.songPickedAt = Date.now();
     ogSkipToNext(this.e);
   }
 

@@ -4,7 +4,7 @@ import React from 'react';
 import {
   forcePlayTrack,
   getCurrentTrackUri,
-  getTrackProgress,
+  getUpcomingUris,
   getTrackType,
   isListenableTrackType,
   isTrackPaused,
@@ -13,6 +13,9 @@ import {
 import { Transport } from './transport/transport';
 import { PeerHost, PeerJoin, cleanRoomCode } from './transport/peer';
 import { selfId as peerSelfId } from 'trystero';
+
+// how many of the owner's upcoming songs friends get in their queue
+const UPCOMING_SHARED = 10;
 
 /** server = the old node server, host = this spotify is the room, join = someone else's spotify is */
 export type Mode =
@@ -85,9 +88,13 @@ export default class Client {
     // your own playback is what everyone syncs to. minus your offset, so your slider moves you and not the whole room
     const host = new PeerHost(this.ltPlayer.version, code, () => ({
       trackUri: getCurrentTrackUri(),
-      position: getTrackProgress() - this.ltPlayer.syncOffset,
+      position: this.ltPlayer.progress() - this.ltPlayer.syncOffset,
       playing: !isTrackPaused(),
       nextUri: Spicetify.Platform.PlayerAPI._state?.nextItems?.[0]?.uri,
+      // not just what you queued: with shuffle on everyone's playlist order is different, so friends get
+      // your actual upcoming songs
+      queue: getUpcomingUris(UPCOMING_SHARED),
+      settled: this.ltPlayer.positionSettled(),
     }));
     this.start({ kind: 'host', code: host.code }, host.self);
     return host.code;
@@ -174,12 +181,18 @@ export default class Client {
 
     on(
       'syncPosition',
-      (trackUri: string, milliseconds: number, hostTimestamp?: number, nextUri?: string) => {
+      (trackUri: string, milliseconds: number, hostTimestamp?: number, nextUri?: string, settled?: boolean) => {
         if (!isListenableTrackType()) return;
         this.ltPlayer.mirrorNext(nextUri);
-        this.ltPlayer.onSyncPosition(trackUri, milliseconds, hostTimestamp);
+        this.ltPlayer.onSyncPosition(trackUri, milliseconds, hostTimestamp, settled);
       },
     );
+
+    // the sync button, pressed by a host
+    on('resync', () => this.ltPlayer.onResync());
+
+    // owners only: how a friend's realign went
+    on('syncDebug', (name: string, d: any) => console.log(`[listenTogether] ${name} realign: ${JSON.stringify(d)}`));
 
     on('bottomMessage', (message: string) => {
       this.ltPlayer.ui.bottomMessage(message);
@@ -213,6 +226,11 @@ export default class Client {
 
     on('hostRequested', (name: string, memberId: string) => {
       this.ltPlayer.ui.hostRequestPopup(name, () => transport.emit('grantHost', memberId));
+    });
+
+    // rooms: the owner's whole queue, every time it changes
+    on('queueSync', (uris: string[]) => {
+      this.ltPlayer.onQueueSync(uris);
     });
 
     // Synchronize the queue on join
