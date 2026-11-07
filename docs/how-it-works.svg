@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="380" viewBox="0 0 960 380" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif">
+  <rect width="960" height="380" rx="16" fill="#181818"/>
+
+  <!-- relays -->
+  <rect x="330" y="28" width="300" height="64" rx="12" fill="none" stroke="#535353" stroke-dasharray="6 6"/>
+  <text x="480" y="56" text-anchor="middle" font-size="15" font-weight="700" fill="#b3b3b3">Public Nostr relays</text>
+  <text x="480" y="78" text-anchor="middle" font-size="12" fill="#8a8a8a">only used to find each other, handshake is encrypted</text>
+  <path d="M400 92 L200 160 M560 92 L760 160 M480 92 L480 160" stroke="#535353" stroke-dasharray="4 6"/>
+
+  <!-- host -->
+  <rect x="60" y="160" width="290" height="150" rx="14" fill="#242424" stroke="#1ed760" stroke-width="2"/>
+  <text x="84" y="196" font-size="17" font-weight="700" fill="#fff">Your Spotify</text>
+  <text x="84" y="222" font-size="13" fill="#1ed760">runs the room</text>
+  <text x="84" y="252" font-size="12" fill="#b3b3b3">everyone follows your real playback</text>
+  <text x="84" y="272" font-size="12" fill="#b3b3b3">play/pause/seek scheduled for all</text>
+  <text x="84" y="292" font-size="12" fill="#b3b3b3">positions + timestamps every second</text>
+
+  <!-- friends -->
+  <rect x="610" y="160" width="290" height="66" rx="14" fill="#242424"/>
+  <text x="634" y="190" font-size="16" font-weight="700" fill="#fff">Friend's Spotify</text>
+  <text x="634" y="212" font-size="12" fill="#b3b3b3">matches clocks with you, lines up</text>
+  <rect x="610" y="244" width="290" height="66" rx="14" fill="#242424"/>
+  <text x="634" y="274" font-size="16" font-weight="700" fill="#fff">Another friend</text>
+  <text x="634" y="296" font-size="12" fill="#b3b3b3">same thing, own account and device</text>
+
+  <!-- direct links -->
+  <path d="M350 200 H610" stroke="#1ed760" stroke-width="3"/>
+  <path d="M350 270 H610" stroke="#1ed760" stroke-width="3"/>
+  <rect x="412" y="216" width="136" height="38" rx="19" fill="#1ed760"/>
+  <text x="480" y="241" text-anchor="middle" font-size="14" font-weight="700" fill="#0f0f0f">direct, WebRTC</text>
+
+  <text x="480" y="352" text-anchor="middle" font-size="13" fill="#8a8a8a">no server, no port forwarding. music plays from each person's own Spotify account</text>
+</svg>

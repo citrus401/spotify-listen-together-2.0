@@ -52,10 +52,10 @@ const Index: NextPage = () => {
     </Link>
   </div>
   <footer className={styles.footer}>
-    <a href='https://github.com/FlafyDev/spotify-listen-together'>
+    <a href='https://github.com/citrus401/spotify-listen-together-2.0'>
       <img src='/images/Github.png' width={64} alt="Github" />
     </a>
-    <p>Made by <a href='https://github.com/FlafyDev'>FlafyDev</a></p>
+    <p>Listen Together by <a href='https://github.com/citrus401'>citrus401</a>, based on the original by <a href='https://github.com/FlafyDev'>FlafyDev</a></p>
     <p>Recommended client v{config.clientRecommendedVersion}</p>
   </footer>
 </main>

@@ -1,47 +1,194 @@
-# Spotify Listen Together
+<p align="center">
+  <img src="docs/hero.svg" alt="Two Spotify players, yours and a friend's, on the same song at the same spot" width="900">
+</p>
 
-### This project is still in development and testing. Please keep this in mind!
+<h1 align="center">Listen Together</h1>
 
-Spotify Listen Together is an extension for [Spicetify](https://spicetify.app/) and an alternative solution to Spotify's Group Session.
+<p align="center">
+  <b>Listen to Spotify with your friends, actually in sync.</b><br>
+  A <a href="https://spicetify.app/">Spicetify</a> extension, and an upgrade over Spotify Jam.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Spicetify-extension-1ed760" alt="Spicetify extension">
+  <img src="https://img.shields.io/badge/license-MIT-1ed760" alt="MIT license">
+  <img src="https://img.shields.io/badge/price-free-1ed760" alt="free">
+  <a href="https://ko-fi.com/citrus401"><img src="https://img.shields.io/badge/Ko--fi-buy%20me%20a%20coffee-1ed760?logo=ko-fi&logoColor=white" alt="Buy me a coffee on Ko-fi"></a>
+</p>
+
+<p align="center">
+  Based on <a href="https://github.com/FlafyDev/spotify-listen-together">Listen Together by FlafyDev</a>. See <a href="#credits">credits</a>.
+</p>
+
+---
+
+Listen Together keeps everyone's Spotify on the same song at the same moment. Everyone listens on their own
+account and their own device, the extension handles the timing.
+
+- **Host a room in one click.** Friends join with a 6 letter code. No server, no port forwarding.
+- **Tight sync.** Play, pause and seek happen at the same moment for everyone, and small drift gets fixed quietly.
+- **Songs change live.** No pause and restart between songs, and crossfade works.
+- **Playlists and albums carry over**, so skip, previous and the playlist view work like normal.
+- **Anything the host does carries over**: media keys, the mini player, controlling Spotify from your phone, the sleep timer.
+- **Sync offset** per person, for Bluetooth headphones and other delay Spotify can't see.
+- **Updates itself** from this repo. It can just tell you, update automatically, or stay off.
 
 ## Download
 
-### Manual Installation
+You need the Spotify app from [spotify.com](https://www.spotify.com/download/) (the Microsoft Store version doesn't
+work with Spicetify) and [Spicetify](https://spicetify.app/docs/getting-started/installation).
+
+### Quick installation (Windows)
+
+Open **Windows PowerShell** (not as administrator) and run these one at a time.
+
+1. Install Spicetify, if you don't have it yet:
+
+   ```powershell
+   iwr -useb https://raw.githubusercontent.com/spicetify/cli/main/install.ps1 | iex
+   ```
+
+2. Install Listen Together:
+
+   ```powershell
+   iwr -useb https://raw.githubusercontent.com/citrus401/spotify-listen-together-2.0/build/listenTogether.js -OutFile "$env:LOCALAPPDATA\spicetify\Extensions\listenTogether.js"; spicetify config extensions listenTogether.js; spicetify apply
+   ```
+
+   If Spicetify tells you to run `spicetify backup apply`, run that.
+
+### Manual installation
 
 1. Download and install [Spicetify](https://spicetify.app/docs/getting-started/installation).
-2. Download [listenTogether.js](https://github.com/JanitorialMess/spotify-listen-together/releases/latest/download/listenTogether.js).
-3. Paste `listenTogether.js` in `%userprofile%\.spicetify\Extensions` (Find the folder `.spicetify` by doing `spicetify -c` in the CMD/Powershell).
+2. Download [listenTogether.js](https://raw.githubusercontent.com/citrus401/spotify-listen-together-2.0/build/listenTogether.js) (right click, save as).
+3. Put `listenTogether.js` in Spicetify's `Extensions` folder (`%LOCALAPPDATA%\spicetify\Extensions` on a default install).
 4. Run `spicetify config extensions listenTogether.js` and `spicetify apply`.
+
+You only install it once. New versions come in through the app, see [Updates](#updates).
+
+> When Spotify updates itself it removes Spicetify. Run `spicetify backup apply` again and everything is back.
 
 ## Usage
 
-Press the "Listen Together" button in the top left to open the extension's menu.
+Press the **Listen Together** button in the top bar to open the menu.
 
-### Creating a Server
+<p align="center">
+  <img src="docs/menu.svg" alt="The Listen Together menu" width="300">
+</p>
 
-To listen together with others, you must first create a server for everyone to join to.
-To get started, go to [Spotify Listen Together Server](https://github.com/JanitorialMess/spotify-listen-together-server) or host with Render.
+### Hosting a room
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/JanitorialMess/spotify-listen-together-server)
+Press **Host a room**. You get a 6 letter code, send it to your friends. Your name is taken from your Spotify
+profile, nothing to fill in.
 
-### Joining a Server
+Your Spotify is the room, so keep it open while you listen. Everyone follows your playback.
 
-Press "Join a server" in the menu and enter the server's address and your name.
+<p align="center">
+  <img src="docs/host-room.svg" alt="The room code popup" width="420">
+</p>
 
-### Playing, Seeking, and Pausing Songs
+### Joining a room
 
-Only the hosts are able to change, seek, and pause songs. To become a host, press "Request host" in the menu and enter the password set by the server.
+Press **Join a room** and enter the code.
 
-### Disconnecting From a Server
+<p align="center">
+  <img src="docs/join-room.svg" alt="The join popup" width="420">
+</p>
 
-Press "Leave the server" in the menu.
+### Playing, seeking, and pausing songs
 
-## Examples
+Only hosts can change, seek and pause songs. Whoever made the room is always a host. Anyone else can press
+**Request host**, and the room's owner gets a popup to allow it. If you're not a host and play a song, it's sent
+to the hosts as a request.
 
-Example of the website:
-![Website](examples/web.png)
+For hosts everything works like normal Spotify: playlists, albums, the queue, shuffle, repeat, crossfade, skip,
+previous, media keys, and controlling Spotify from your phone.
 
-## Todo: (client + server)
+### Sync offset
 
-- Change "server" to "room". Have multiple rooms per server.
-- Fix unexpected behavior when selecting the song that is currently playing.
+If you hear the music a bit later or earlier than everyone else (usually Bluetooth headphones), open **Sync offset**.
+Slide right if you're hearing it late, left if early. It only changes it for you.
+
+<p align="center">
+  <img src="docs/sync-offset.svg" alt="The sync offset slider" width="420">
+</p>
+
+### Updates
+
+Every push to this repo is built automatically, and the extension checks for new builds when Spotify starts and
+every few hours. In the menu, **Updates** switches between:
+
+- **just tell me** (default): a popup asks before updating.
+- **automatic**: it downloads quietly and uses the new version next time Spotify starts.
+- **off**: it never checks.
+
+**Check for updates** checks right away.
+
+### Leaving a room
+
+Press **Leave the room**. If the host leaves, the room closes for everyone.
+
+## Using a server instead
+
+Rooms connect people's Spotify apps directly. Some networks (some mobile hotspots and strict routers) block direct
+connections. If joining a room says it couldn't connect directly, use a server: everyone presses **Join a server**
+and enters its address. Servers use the older sync method, so rooms are the better option when they work.
+
+The server is in [`server/`](server/). To run it yourself you need [Node.js](https://nodejs.org/):
+
+```powershell
+cd server
+npx yarn
+npx yarn build
+$env:HOST_PASSWORD = "pick-a-password"; npx yarn start
+```
+
+It runs on port 3000 (change it with `PORT`). Hosts get controls with **Request host** and that password.
+
+Or host it on Render:
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/citrus401/spotify-listen-together-2.0)
+
+## How it works
+
+<p align="center">
+  <img src="docs/how-it-works.svg" alt="The host's Spotify runs the room and friends connect to it directly over WebRTC" width="800">
+</p>
+
+- The host's Spotify runs the room. Friends connect straight to it over WebRTC.
+- Public [Nostr](https://nostr.com/) relays are only used for the two sides to find each other. The handshake is
+  encrypted with the room code, and nothing else goes through them.
+- Friends match their clock with the host's, and the host sends its position with a timestamp every second, so
+  network delay doesn't affect the sync.
+- Play, pause and seek get scheduled for a moment just past everyone's network delay, so everyone does them at the
+  same time.
+
+## Todo
+
+- A relay fallback for networks that block direct connections, so servers aren't needed there.
+- Bring the newer sync to servers.
+- A listing on the Spicetify Marketplace.
+
+## Credits
+
+Listen Together was created by **[FlafyDev](https://github.com/FlafyDev)**:
+[the original extension](https://github.com/FlafyDev/spotify-listen-together) and
+[server](https://github.com/FlafyDev/spotify-listen-together-server). The idea, the original design and a lot of the
+code are theirs.
+
+This version builds on **[JanitorialMess](https://github.com/JanitorialMess)'s fork**
+([extension](https://github.com/JanitorialMess/spotify-listen-together),
+[server](https://github.com/JanitorialMess/spotify-listen-together-server)), which added queue sync and cleaned up a
+lot of the code. Both histories are kept in this repo.
+
+Peer to peer rooms use [Trystero](https://github.com/dmotz/trystero). The icon is from the original project.
+
+Listen Together 2.0 (rooms, the new sync, Spotify 1.3 support and the updater) is by
+**[citrus401](https://github.com/citrus401)**.
+
+## Support
+
+If Listen Together made your listening sessions better, you can [buy me a coffee on Ko-fi](https://ko-fi.com/citrus401).
+
+## License
+
+[MIT](LICENSE). The original copyright stays with FlafyDev, the changes are mine.

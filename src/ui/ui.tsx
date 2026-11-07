@@ -312,8 +312,7 @@ export default class UI {
       this.joinServerPopup((btn, address, name, autoConnect) => {
         if (btn === 'Host a server') {
           // heroku killed the free tier in 2022, so this goes to the self host instructions instead
-          window.location.href =
-            'https://github.com/JanitorialMess/spotify-listen-together-server#readme';
+          window.location.href = `https://github.com/${REPO}#using-a-server-instead`;
         } else {
           Popup.close();
           if (!!address && !!name) {
@@ -386,15 +385,29 @@ export default class UI {
       [],
       [
         <Popup.Text
-          text={`Listen Together v${pJson.version} created by FlafyDev`}
+          key="v"
+          text={`Listen Together v${pJson.version} (build ${runningBuild() || 'dev'}) by citrus401.`}
+          centered={false}
+        />,
+        <Popup.Text
+          key="credit"
+          text="Based on Listen Together by FlafyDev, who made the original extension and server, and the fork by JanitorialMess."
           centered={false}
         />,
         <Popup.Button
-          text={'Github'}
-          onClick={() =>
-            (window.location.href =
-              'https://github.com/FlafyDev/spotify-listen-together')
-          }
+          key="gh"
+          text={'GitHub'}
+          onClick={() => (window.location.href = `https://github.com/${REPO}`)}
+        />,
+        <Popup.Button
+          key="orig"
+          text={'Original by FlafyDev'}
+          onClick={() => (window.location.href = 'https://github.com/FlafyDev/spotify-listen-together')}
+        />,
+        <Popup.Button
+          key="kofi"
+          text={'Ko-fi'}
+          onClick={() => (window.location.href = 'https://ko-fi.com/citrus401')}
         />,
       ],
     );

@@ -1,13 +1,13 @@
 import { NextPage } from "next";
 import Image from 'next/image'
-import config from "../../config";
 import styles from '../styles/Index.module.css'
 import stylesInst from '../styles/Instructions.module.css'
 import spotStyles from '../styles/Spot.module.css'
 
 const Instructions: NextPage = () => {
-  const repoURL = `https://raw.githubusercontent.com/FlafyDev/spotify-listen-together/${config.clientRecommendedVersion}`
-  const listenTogetherURL = `${repoURL}/compiled/listenTogether.js`
+  // the build workflow keeps the newest build on the build branch
+  const repoURL = `https://raw.githubusercontent.com/citrus401/spotify-listen-together-2.0/build`
+  const listenTogetherURL = `${repoURL}/listenTogether.js`
   const windowsInstallCMD = `Invoke-WebRequest -UseBasicParsing "https://raw.githubusercontent.com/CharlieS1103/spicetify-marketplace/master/install.ps1" | Invoke-Expression`
 
   return (

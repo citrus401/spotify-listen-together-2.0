@@ -1,13 +1,23 @@
 {
   "name": "Listen Together",
-  "description": "A free alternative to Group Sessions",
-  "preview": "icon.png",
-  "main": "compiled/listenTogether.js",
-  "readme": "README.md",
+  "description": "Listen to Spotify with your friends, actually in sync. Host a room in one click, friends join with a code.",
+  "preview": "https://raw.githubusercontent.com/citrus401/spotify-listen-together-2.0/main/icon.png",
+  "main": "listenTogether.js",
+  "branch": "build",
+  "readme": "https://raw.githubusercontent.com/citrus401/spotify-listen-together-2.0/main/README.md",
   "authors": [
     {
-      "name": "FlafyDev",
+      "name": "citrus401",
+      "url": "https://github.com/citrus401"
+    },
+    {
+      "name": "FlafyDev (original)",
       "url": "https://github.com/FlafyDev"
     }
+  ],
+  "tags": [
+    "social",
+    "sync",
+    "listen together"
   ]
 }

@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c1c1c"/>
+      <stop offset="1" stop-color="#0f0f0f"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#1ed760" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#1ed760" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="art" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7c5cff"/>
+      <stop offset="0.55" stop-color="#e2557c"/>
+      <stop offset="1" stop-color="#ffb84d"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="400" rx="20" fill="url(#bg)"/>
+  <ellipse cx="600" cy="200" rx="420" ry="190" fill="url(#glow)"/>
+
+  <!-- you -->
+  <g transform="translate(110 92)">
+    <rect width="380" height="216" rx="16" fill="#242424"/>
+    <text x="24" y="38" font-size="13" font-weight="700" fill="#1ed760" letter-spacing="1">YOU · HOST</text>
+    <rect x="24" y="56" width="92" height="92" rx="8" fill="url(#art)"/>
+    <text x="136" y="92" font-size="20" font-weight="700" fill="#fff">Same song</text>
+    <text x="136" y="118" font-size="14" fill="#b3b3b3">Your playlist</text>
+    <rect x="24" y="174" width="332" height="4" rx="2" fill="#4d4d4d"/>
+    <rect x="24" y="174" width="141" height="4" rx="2" fill="#fff"/>
+    <circle cx="165" cy="176" r="6" fill="#fff"/>
+    <text x="24" y="200" font-size="12" fill="#b3b3b3">1:24</text>
+    <text x="356" y="200" text-anchor="end" font-size="12" fill="#b3b3b3">3:18</text>
+  </g>
+
+  <!-- friend -->
+  <g transform="translate(710 92)">
+    <rect width="380" height="216" rx="16" fill="#242424"/>
+    <text x="24" y="38" font-size="13" font-weight="700" fill="#b3b3b3" letter-spacing="1">FRIEND</text>
+    <rect x="24" y="56" width="92" height="92" rx="8" fill="url(#art)"/>
+    <text x="136" y="92" font-size="20" font-weight="700" fill="#fff">Same song</text>
+    <text x="136" y="118" font-size="14" fill="#b3b3b3">Your playlist</text>
+    <rect x="24" y="174" width="332" height="4" rx="2" fill="#4d4d4d"/>
+    <rect x="24" y="174" width="141" height="4" rx="2" fill="#fff"/>
+    <circle cx="165" cy="176" r="6" fill="#fff"/>
+    <text x="24" y="200" font-size="12" fill="#b3b3b3">1:24</text>
+    <text x="356" y="200" text-anchor="end" font-size="12" fill="#b3b3b3">3:18</text>
+  </g>
+
+  <!-- link -->
+  <path d="M498 200 H702" stroke="#1ed760" stroke-width="3" stroke-dasharray="2 10" stroke-linecap="round"/>
+  <rect x="540" y="176" width="120" height="48" rx="24" fill="#1ed760"/>
+  <text x="600" y="206" text-anchor="middle" font-size="16" font-weight="700" fill="#0f0f0f">in sync</text>
+</svg>

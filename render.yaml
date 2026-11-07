@@ -1,0 +1,14 @@
+# Render blueprint for the optional server (the "Deploy to Render" button in the README)
+services:
+  - type: web
+    name: listen-together
+    runtime: node
+    rootDir: server
+    healthCheckPath: /
+    buildCommand: yarn; yarn build
+    startCommand: yarn start
+    plan: free
+    envVars:
+      # Render asks for this when you deploy. people use it with "Request host"
+      - key: HOST_PASSWORD
+        sync: false
