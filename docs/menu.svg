@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="420" height="430" viewBox="0 0 420 430" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif"><rect width="420" height="430" rx="12" fill="#242424"/><text x="28" y="50" font-size="22" font-weight="700" fill="#fff">Listen Together</text><path d="M374 34 l14 14 M388 34 l-14 14" stroke="#b3b3b3" stroke-width="2" stroke-linecap="round"/>
-<rect x="110" y="82" width="200" height="34" rx="17" fill="none" stroke="#727272"/><text x="210" y="104" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">Host a room</text>
-<rect x="110" y="130" width="200" height="34" rx="17" fill="none" stroke="#727272"/><text x="210" y="152" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">Join a room</text>
-<rect x="110" y="178" width="200" height="34" rx="17" fill="none" stroke="#727272"/><text x="210" y="200" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">Join a server</text>
-<rect x="110" y="226" width="200" height="34" rx="17" fill="none" stroke="#727272"/><text x="210" y="248" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">Sync offset</text>
-<rect x="110" y="274" width="200" height="34" rx="17" fill="none" stroke="#727272"/><text x="210" y="296" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">Updates: just tell me</text>
-<rect x="110" y="322" width="200" height="34" rx="17" fill="none" stroke="#727272"/><text x="210" y="344" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">Check for updates</text>
-<rect x="110" y="370" width="200" height="34" rx="17" fill="none" stroke="#727272"/><text x="210" y="392" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">About</text>
-</svg>

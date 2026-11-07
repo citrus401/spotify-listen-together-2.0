@@ -26,7 +26,12 @@ interface Member {
   latency: number;
   /** last time we told this one to get on the room's song, so a client that can't play it doesn't get spammed */
   resyncedAt: number;
+  /** spotify profile picture, only ever a spotify image url */
+  avatar?: string;
 }
+
+// whatever a member sends ends up as an <img src> on everyone's screen, so spotify's own image hosts only
+const AVATAR_URL = /^https:\/\/(i\.scdn\.co|mosaic\.scdn\.co|platform-lookaside-fbsbx\.com)\/[\w\-./?=&%]{1,300}$/;
 
 export interface RoomHostIO {
   send(memberId: string, event: string, ...args: any[]): void;
@@ -250,6 +255,14 @@ export default class RoomHost {
       case 'requestListeners':
         this.sendListeners(id);
         return;
+
+      case 'profile': {
+        const { avatar, name } = args[0] || {};
+        m.avatar = typeof avatar === 'string' && AVATAR_URL.test(avatar) ? avatar : undefined;
+        if (typeof name === 'string' && name.trim()) m.name = name.trim().slice(0, 40);
+        this.sendListeners();
+        return;
+      }
     }
   }
 
@@ -287,9 +300,12 @@ export default class RoomHost {
 
   private sendListeners(to?: string) {
     const list = this.listeners().map((l) => ({
+      id: l.id,
       name: l.name,
       isHost: l.isHost,
       watchingAD: l.trackUri.includes('spotify:ad:'),
+      avatar: l.avatar,
+      owner: l.id === this.ownerId,
     }));
     if (to) this.io.send(to, 'listeners', list);
     else this.members.forEach((m) => this.io.send(m.id, 'listeners', list));

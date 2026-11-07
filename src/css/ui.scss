@@ -1,77 +1,10 @@
-// define variables
-$essential-base: #727272;
-$essential-subdued: #727272;
-$color: white;
-$spice-button-disabled: #535353;
-$spice-text: white;
-
-// Modify Spicetify Modal
-.GenericModal {
-  border-radius: 8px;
-  background-color: #121212 !important;
+// only our popups get touched, this used to restyle every spicetify modal (marketplace's too)
+.GenericModal:has(.lt-panel) {
+  border-radius: 12px;
+  background-color: var(--background-base, #121212) !important;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.6);
 }
 
-.main-trackCreditsModal-container {
-  min-width: 20vw;
-  background-color: #121212 !important;
-}
-
-// Custom CSS inspired by Spotify
-.button {
-  box-sizing: border-box;
-  -webkit-tap-highlight-color: transparent;
-  font-size: 0.8125rem;
-  font-weight: 700;
-  font-family: var(
-    --font-family,
-    CircularSp,
-    CircularSp-Arab,
-    CircularSp-Hebr,
-    CircularSp-Cyrl,
-    CircularSp-Grek,
-    CircularSp-Deva,
-    var(--fallback-fonts, sans-serif)
-  );
-  background-color: transparent;
-  border-radius: 500px;
-  cursor: pointer;
-  position: relative;
-  text-align: center;
-  text-decoration: none;
-  text-transform: none;
-  touch-action: manipulation;
-  transition-duration: 33ms;
-  transition-property: background-color, border-color, color, box-shadow, filter,
-    transform;
-  user-select: none;
-  vertical-align: middle;
-  transform: translate3d(0px, 0px, 0px);
-  padding-block: 3px;
-  padding-inline: 15px;
-  border: 1px solid $essential-base;
-  color: $color;
-  min-block-size: 32px;
-  display: inline-flex;
-  -webkit-box-align: center;
-  align-items: center;
-  -webkit-box-pack: center;
-  justify-content: center;
-}
-
-.button:hover {
-  transform: scale(1.04);
-  border-color: #ffffff !important;
-}
-
-.button:active {
-  opacity: 0.7;
-  outline: none;
-  transform: scale(1);
-  border-color: var(--essential-subdued, #878787);
-}
-
-.lt-slider {
-  width: 100%;
-  accent-color: var(--spice-button, #1db954);
-  cursor: pointer;
+.main-trackCreditsModal-container:has(.lt-panel) {
+  background-color: var(--background-base, #121212) !important;
 }

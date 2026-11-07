@@ -69,30 +69,32 @@ You only install it once. New versions come in through the app, see [Updates](#u
 
 ## Usage
 
-Press the **Listen Together** button in the top bar to open the menu.
+Press the **Listen Together** button in the top bar to open the panel.
 
 <p align="center">
-  <img src="docs/menu.svg" alt="The Listen Together menu" width="300">
+  <img src="docs/panel-home.png" alt="The Listen Together panel: Host a room, or type a code to join one" width="440">
 </p>
 
 ### Hosting a room
 
-Press **Host a room**. You get a 6 letter code, send it to your friends. Your name is taken from your Spotify
-profile, nothing to fill in.
+Press **Host a room**. The panel shows your room's 6 letter code with a copy button, send it to your friends.
+Your name and picture come from your Spotify profile, nothing to fill in.
 
 Your Spotify is the room, so keep it open while you listen. Everyone follows your playback.
 
 <p align="center">
-  <img src="docs/host-room.svg" alt="The room code popup" width="420">
+  <img src="docs/panel-room.png" alt="A room with its code, who's listening, and who's host" width="440">
+</p>
+
+While you're in a room, a chip in the player bar shows the code and who's listening. Click it to open the panel.
+
+<p align="center">
+  <img src="docs/chip.png" alt="The room chip in Spotify's player bar" width="480">
 </p>
 
 ### Joining a room
 
-Press **Join a room** and enter the code.
-
-<p align="center">
-  <img src="docs/join-room.svg" alt="The join popup" width="420">
-</p>
+Type the code into the box under **Host a room** and press **Join**.
 
 ### Playing, seeking, and pausing songs
 
@@ -103,35 +105,40 @@ to the hosts as a request.
 For hosts everything works like normal Spotify: playlists, albums, the queue, shuffle, repeat, crossfade, skip,
 previous, media keys, and controlling Spotify from your phone.
 
-### Sync offset
+### Settings
 
-If you hear the music a bit later or earlier than everyone else (usually Bluetooth headphones), open **Sync offset**.
-Slide right if you're hearing it late, left if early. It only changes it for you.
+The cogwheel in the panel opens settings:
+
+- **Your name** as others see it.
+- **Sync offset**: if you hear the music a bit later or earlier than everyone else (usually Bluetooth headphones),
+  slide right if you're hearing it late, left if early. It only changes it for you.
+- **Updates**, see below.
+- Version, credits and links.
 
 <p align="center">
-  <img src="docs/sync-offset.svg" alt="The sync offset slider" width="420">
+  <img src="docs/panel-settings.png" alt="Settings: name, sync offset, updates and about" width="440">
 </p>
 
 ### Updates
 
 Every push to this repo is built automatically, and the extension checks for new builds when Spotify starts and
-every few hours. In the menu, **Updates** switches between:
+every few hours. In settings, **Updates** switches between:
 
-- **just tell me** (default): a popup asks before updating.
-- **automatic**: it downloads quietly and uses the new version next time Spotify starts.
-- **off**: it never checks.
+- **Just tell me** (default): a popup asks before updating.
+- **Automatic**: it downloads quietly and uses the new version next time Spotify starts.
+- **Off**: it never checks.
 
-**Check for updates** checks right away.
+**Check now** checks right away.
 
 ### Leaving a room
 
-Press **Leave the room**. If the host leaves, the room closes for everyone.
+Press **Leave**, or **End room** if it's yours. If the host leaves, the room closes for everyone.
 
 ## Using a server instead
 
 Rooms connect people's Spotify apps directly. Some networks (some mobile hotspots and strict routers) block direct
-connections. If joining a room says it couldn't connect directly, use a server: everyone presses **Join a server**
-and enters its address. Servers use the older sync method, so rooms are the better option when they work.
+connections. If joining a room says it couldn't connect directly, use a server: everyone opens **Join a server**
+at the bottom of the panel and enters its address. Servers use the older sync method, so rooms are the better option when they work.
 
 The server is in [`server/`](server/). To run it yourself you need [Node.js](https://nodejs.org/):
 

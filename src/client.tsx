@@ -1,7 +1,6 @@
 import { io } from 'socket.io-client';
 import LTPlayer from './ltPlayer';
 import React from 'react';
-import BottomInfo from './ui/bottomInfo';
 import {
   forcePlayTrack,
   getCurrentTrackUri,
@@ -13,6 +12,7 @@ import {
 } from './utils/spotifyUtils';
 import { Transport } from './transport/transport';
 import { PeerHost, PeerJoin, cleanRoomCode } from './transport/peer';
+import { selfId as peerSelfId } from 'trystero';
 
 /** server = the old node server, host = this spotify is the room, join = someone else's spotify is */
 export type Mode =
@@ -41,11 +41,28 @@ export default class Client {
     return this.mode && this.mode.kind !== 'server' ? this.mode.code : null;
   }
 
+  /** our id in the room's listener list, so the panel can say which one is you. servers don't have one */
+  get selfId() {
+    return this.mode && this.mode.kind !== 'server' ? peerSelfId : undefined;
+  }
+
   private get label() {
     if (!this.mode) return '';
     if (this.mode.kind === 'server') return this.mode.address;
-    if (this.mode.kind === 'host') return `your room ${this.mode.code}`;
     return `room ${this.mode.code}`;
+  }
+
+  /** name + spotify avatar for the listener list. rooms use it, the node server just ignores the event */
+  async sendProfile() {
+    if (!this.socket || !this.connected) return;
+    let avatar: string | undefined;
+    try {
+      const user = await (Spicetify.Platform as any).UserAPI.getUser();
+      const images = (user?.images || []).filter((i: any) => typeof i?.url === 'string');
+      images.sort((a: any, b: any) => (a.width || 0) - (b.width || 0));
+      avatar = images[0]?.url;
+    } catch {}
+    this.socket.emit('profile', { name: this.ltPlayer.settingsManager.settings.name, avatar });
   }
 
   connect(server?: string) {
@@ -94,7 +111,7 @@ export default class Client {
     this.socket = transport;
     this.connecting = true;
     this.connected = false;
-    this.ltPlayer.ui.renderBottomInfo(<BottomInfo server={this.label} loading={true} />);
+    this.ltPlayer.ui.setListeners([]);
 
     // a transport we already dropped can still fire stuff (socket.io retries), ignore anything not current
     const on = (event: string, handler: (...args: any[]) => void) =>
@@ -103,10 +120,10 @@ export default class Client {
       });
 
     on('connect', () => {
-      this.ltPlayer.ui.renderBottomInfo(<BottomInfo server={this.label} />);
       this.connecting = false;
       this.connected = true;
       this.ltPlayer.isHost = false;
+      this.ltPlayer.ui.changed();
       // the callback is socket.io's version check, rooms answer with versionMismatch instead
       transport.emit(
         'login',
@@ -118,6 +135,7 @@ export default class Client {
       // Initialize ltPlayer (patching, etc.)
       this.ltPlayer.init();
       this.ltPlayer.onLogin();
+      this.sendProfile();
 
       // host passwords are a server thing, in a room the owner just gets asked
       const password = this.ltPlayer.settingsManager.settings.password;
@@ -172,9 +190,7 @@ export default class Client {
     });
 
     on('listeners', (clients: any) => {
-      this.ltPlayer.ui.renderBottomInfo(
-        <BottomInfo server={this.label} listeners={clients} />,
-      );
+      this.ltPlayer.ui.setListeners(clients);
     });
 
     on('isHost', (isHost: boolean) => {
@@ -185,6 +201,7 @@ export default class Client {
         } else {
           this.ltPlayer.ui.bottomMessage('You are no longer a host.');
         }
+        this.ltPlayer.ui.changed();
       }
     });
 
@@ -266,7 +283,7 @@ export default class Client {
     this.connecting = false;
     socket.disconnect();
     this.ltPlayer.unload();
-    this.ltPlayer.ui.renderBottomInfo(<BottomInfo server={''} />);
+    this.ltPlayer.ui.setListeners([]);
     if (popup) this.ltPlayer.ui.disconnectedPopup();
   }
 }

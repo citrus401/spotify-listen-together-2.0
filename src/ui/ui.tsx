@@ -1,263 +1,246 @@
 import React from 'react';
 import ReactDOM from 'react-dom';
 import LTPlayer from '../ltPlayer';
-import BottomInfo from './bottomInfo';
-import { Popup } from './popup';
 import iconSvg from './ListenTogetherIcon';
 import pJson from '../../package.json';
 import { cleanRoomCode } from '../transport/peer';
-import {
-  applyUpdate,
-  BuildInfo,
-  checkForUpdates,
-  REPO,
-  runningBuild,
-} from '../utils/updater';
+import { applyUpdate, BuildInfo, checkForUpdates, runningBuild } from '../utils/updater';
+import { Panel, PanelApi, PanelState, RoomChip, stopClick, UpdateMode } from './panel';
+import { Listener, Store } from './store';
 
 import '../css/ui.scss';
-export default class UI {
-  bottomInfoContainer: Element | null = null;
+import '../css/panel.scss';
+
+type DialogButton = { label: string; kind?: 'primary' | 'secondary' | 'ghost'; onClick?: () => void };
+
+export default class UI implements PanelApi {
+  store = new Store();
+  private chipEl: HTMLElement | null = null;
 
   constructor(public ltPlayer: LTPlayer) {
-    new Spicetify.Topbar.Button('Listen Together', iconSvg, () =>
-      this.openMenu(),
-    );
+    new Spicetify.Topbar.Button('Listen Together', iconSvg, () => this.openPanel());
+    this.mountChip();
+  }
 
-    let loop = setInterval(() => {
-      let playingBar = document
-        .getElementsByClassName('main-nowPlayingBar-nowPlayingBar')
-        .item(0);
-      if (playingBar) {
-        clearInterval(loop);
-        this.bottomInfoContainer = document.createElement('div');
-        this.bottomInfoContainer.id = 'listenTogether-bottomInfo';
-        // Add top margin of 10px to the bottom info container
-        playingBar.appendChild(this.bottomInfoContainer);
-        this.renderBottomInfo(<BottomInfo server="" />);
+  /*
+    the chip lives in the player bar's right side, left of lyrics/queue. spotify re-renders that bar
+    sometimes and our node can get dropped, so this just puts it back
+  */
+  private mountChip() {
+    const mount = () => {
+      const extra = document.querySelector('.main-nowPlayingBar-extraControls');
+      if (!extra) return;
+      if (!this.chipEl) {
+        this.chipEl = document.createElement('div');
+        this.chipEl.id = 'listenTogether-chip';
+        ReactDOM.render(<RoomChip api={this} />, this.chipEl);
       }
-    }, 100);
+      if (this.chipEl.parentElement !== extra) extra.insertBefore(this.chipEl, extra.firstChild);
+    };
+    mount();
+    setInterval(mount, 1000);
   }
 
-  songRequestPopup(
-    trackName: string,
-    fromListener: string,
-    permitted: () => void,
-  ) {
-    Popup.create(
-      'Listen Together',
-      (btn) => {
-        if (btn === 'Play') permitted();
-        Popup.close();
-      },
-      ['Play'],
-      [<Popup.Text text={`${fromListener} wants to play "${trackName}".`} />],
-    );
+  /* ---------- state for the chip and the panel ---------- */
+
+  changed() {
+    this.store.changed();
   }
 
-  openMenu() {
+  setListeners(listeners: Listener[] | null) {
+    this.store.listeners = Array.isArray(listeners) ? listeners : [];
+    this.changed();
+  }
+
+  state(): PanelState {
     const client = this.ltPlayer.client;
-    const code = client.roomCode;
-    const mode = this.ltPlayer.settingsManager.settings.updateMode;
-    const common = [
-      <Popup.Button
-        key="offset"
-        text={'Sync offset'}
-        onClick={() => this.syncOffsetPopup()}
-      />,
-      <Popup.Button
-        key="updmode"
-        text={`Updates: ${{ ask: 'just tell me', auto: 'automatic', off: 'off' }[mode]}`}
-        onClick={() => {
-          const next = ({ ask: 'auto', auto: 'off', off: 'ask' } as const)[mode];
-          this.ltPlayer.settingsManager.settings.updateMode = next;
-          this.ltPlayer.settingsManager.saveSettings();
-          this.openMenu();
-        }}
-      />,
-      <Popup.Button
-        key="updcheck"
-        text={'Check for updates'}
-        onClick={() => {
-          Popup.close();
-          checkForUpdates(this.ltPlayer.settingsManager, this, true);
-        }}
-      />,
-      <Popup.Button key="about" text={'About'} onClick={() => this.onClickAbout()} />,
-    ];
+    const s = this.ltPlayer.settingsManager.settings;
+    const mode = client.mode;
+    return {
+      status: client.connected ? 'connected' : client.connecting ? 'connecting' : 'idle',
+      kind: mode?.kind ?? null,
+      code: mode ? (mode.kind === 'server' ? mode.address : mode.code) : '',
+      isHost: this.ltPlayer.isHost,
+      selfId: client.selfId,
+      name: s.name,
+      offset: s.syncOffset,
+      updateMode: s.updateMode,
+      version: pJson.version,
+      build: runningBuild(),
+      serverAddress: s.server,
+      autoConnect: s.autoConnect,
+    };
+  }
 
-    if (!client.connected && !client.connecting) {
-      Popup.create('Listen Together', () => Popup.close(), [], [
-        <Popup.Button key="host" text={'Host a room'} onClick={() => this.onClickHostRoom()} />,
-        <Popup.Button key="join" text={'Join a room'} onClick={() => this.joinRoomPopup()} />,
-        <Popup.Button
-          key="server"
-          text={'Join a server'}
-          onClick={() => this.onClickJoinAServer()}
-        />,
-        ...common,
-      ]);
-      return;
-    }
+  /* ---------- panel actions ---------- */
 
-    Popup.create('Listen Together', () => Popup.close(), [], [
-      <Popup.Button
-        key="leave"
-        text={code ? 'Leave the room' : 'Leave the server'}
-        onClick={() => {
-          client.disconnect(false);
-          Popup.close();
-        }}
-      />,
-      ...(code
-        ? [
-            <Popup.Button
-              key="copy"
-              text={`Copy room code (${code})`}
-              onClick={() => this.copyRoomCode(code)}
-            />,
-          ]
-        : []),
-      // whoever made the room is always host, nothing to request or drop
-      ...(client.mode?.kind !== 'host'
-        ? [
-            <Popup.Button
-              key="hostctl"
-              text={this.ltPlayer.isHost ? 'Stop hosting' : 'Request host'}
-              onClick={() => this.onClickRequestHost()}
-              disabled={!client.connected}
-            />,
-          ]
-        : []),
-      ...common,
-    ]);
+  openPanel() {
+    Spicetify.PopupModal.display({ title: 'Listen Together', content: (<Panel api={this} />) as any });
   }
 
   /** settings name if they picked one, otherwise their spotify display name. no typing needed to host */
-  private async defaultName() {
-    const saved = this.ltPlayer.settingsManager.settings.name;
-    if (saved && saved !== 'Anonymous') return saved;
+  private async ensureName() {
+    const settings = this.ltPlayer.settingsManager;
+    const saved = settings.settings.name;
+    if (saved && saved !== 'Anonymous') return;
     try {
       const user = await (Spicetify.Platform as any).UserAPI.getUser();
-      if (user?.displayName) return String(user.displayName);
+      if (user?.displayName) {
+        settings.settings.name = String(user.displayName).slice(0, 40);
+        settings.saveSettings();
+      }
     } catch {}
-    return 'Anonymous';
   }
 
-  private async onClickHostRoom() {
+  async hostRoom() {
+    await this.ensureName();
+    this.ltPlayer.client.hostRoom();
+    this.changed();
+  }
+
+  async joinRoom(code: string) {
+    await this.ensureName();
+    this.ltPlayer.client.joinRoom(code);
+    this.changed();
+  }
+
+  async joinServer(address: string, autoConnect: boolean) {
+    await this.ensureName();
     const settings = this.ltPlayer.settingsManager;
-    settings.settings.name = await this.defaultName();
+    settings.settings.server = address;
+    settings.settings.autoConnect = autoConnect;
     settings.saveSettings();
-    const code = this.ltPlayer.client.hostRoom();
-    this.roomCodePopup(code);
+    this.ltPlayer.client.connect(address);
+    this.changed();
   }
 
-  roomCodePopup(code: string) {
-    Popup.create(
-      'Listen Together',
-      (btn) => {
-        if (btn === 'Copy code') this.copyRoomCode(code);
-        Popup.close();
-      },
-      ['Copy code', 'Done'],
-      [
-        <Popup.Text key="t" text="Your room is up. Send this code to your friends:" centered />,
-        <Popup.Text key="c" text={code} centered big />,
-        <Popup.Text
-          key="n"
-          text="They join straight to your Spotify, so keep it open while you listen."
-          centered
-        />,
-      ],
-    );
+  leave() {
+    this.ltPlayer.client.disconnect(false);
+    this.changed();
   }
 
-  copyRoomCode(code: string) {
-    // both missing from the spicetify typings, they exist at runtime though
+  requestHost(password?: string) {
+    const socket = this.ltPlayer.client.socket;
+    if (password) {
+      socket?.emit('requestHost', password);
+      this.ltPlayer.settingsManager.settings.password = password;
+      this.ltPlayer.settingsManager.saveSettings();
+    } else {
+      // rooms have no password, the owner gets asked instead
+      socket?.emit('requestHost');
+      this.bottomMessage('Asked the host for controls.');
+    }
+  }
+
+  stopHosting() {
+    this.ltPlayer.client.socket?.emit('cancelHost');
+  }
+
+  async copy(text: string) {
+    // missing from the spicetify typings, exists at runtime though
     const clipboard = (Spicetify.Platform as any).ClipboardAPI;
-    Promise.resolve(
-      clipboard?.copy ? clipboard.copy(code) : navigator.clipboard.writeText(code),
-    )
-      .then(() => this.bottomMessage(`Room code ${code} copied.`))
-      .catch(() => this.bottomMessage(`Couldn't copy, the code is ${code}.`));
+    try {
+      await (clipboard?.copy ? clipboard.copy(text) : navigator.clipboard.writeText(text));
+      return true;
+    } catch {
+      this.bottomMessage(`Couldn't copy, it's ${text}`);
+      return false;
+    }
   }
 
-  private async joinRoomPopup() {
-    let code = '';
-    let name = await this.defaultName();
-    Popup.create(
-      'Listen Together',
-      (btn) => {
-        Popup.close();
-        if (btn !== 'Join' || !cleanRoomCode(code)) return;
-        this.ltPlayer.settingsManager.settings.name = name || 'Anonymous';
-        this.ltPlayer.settingsManager.saveSettings();
-        this.ltPlayer.client.joinRoom(code);
-      },
-      ['Join'],
-      [
-        <Popup.Textbox
-          key="code"
-          name="Room code"
-          example="K7QX2M"
-          onInput={(text) => (code = text)}
-        />,
-        <Popup.Textbox
-          key="name"
-          name="Your name"
-          defaultValue={name}
-          onInput={(text) => (name = text)}
-        />,
-      ],
-    );
+  setName(name: string) {
+    const settings = this.ltPlayer.settingsManager;
+    settings.settings.name = name;
+    settings.saveSettings();
+    this.ltPlayer.client.sendProfile();
+    this.changed();
+  }
+
+  setOffset(ms: number) {
+    this.ltPlayer.setSyncOffset(ms);
+    this.changed();
+  }
+
+  setUpdateMode(mode: UpdateMode) {
+    this.ltPlayer.settingsManager.settings.updateMode = mode;
+    this.ltPlayer.settingsManager.saveSettings();
+    this.changed();
+  }
+
+  checkUpdates() {
+    checkForUpdates(this.ltPlayer.settingsManager, this, true);
+  }
+
+  openUrl(url: string) {
+    window.location.href = url;
+  }
+
+  /* ---------- small dialogs (requests, messages) in the same style ---------- */
+
+  private dialog(text: string, buttons: DialogButton[]) {
+    Spicetify.PopupModal.display({
+      title: 'Listen Together',
+      content: (
+        <div className="lt-panel" onClick={stopClick}>
+          <p>{text}</p>
+          <div className="lt-actions">
+            <span className="lt-actions__spacer" />
+            {buttons.map((b) => (
+              <button
+                key={b.label}
+                className={`lt-btn lt-btn--${b.kind || 'secondary'}`}
+                onClick={() => {
+                  Spicetify.PopupModal.hide();
+                  b.onClick?.();
+                }}
+              >
+                {b.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) as any,
+    });
+  }
+
+  songRequestPopup(trackName: string, fromListener: string, permitted: () => void) {
+    this.dialog(`${fromListener} wants to play "${trackName}".`, [
+      { label: 'Not now', kind: 'ghost' },
+      { label: 'Play it', kind: 'primary', onClick: permitted },
+    ]);
+  }
+
+  hostRequestPopup(name: string, allow: () => void) {
+    this.dialog(`${name} wants host controls (play, pause, skip, seek).`, [
+      { label: 'Not now', kind: 'ghost' },
+      { label: 'Allow', kind: 'primary', onClick: allow },
+    ]);
   }
 
   updatePopup(info: BuildInfo, running: number) {
     const settings = this.ltPlayer.settingsManager;
     const inRoom = this.ltPlayer.client.connected;
-    Popup.create(
-      'Listen Together',
-      (btn) => {
-        Popup.close();
-        if (btn === 'Update now') applyUpdate(settings, info.build);
-        if (btn === 'Always auto-update') {
-          settings.settings.updateMode = 'auto';
-          applyUpdate(settings, info.build);
-        }
-      },
-      ['Update now', 'Always auto-update', 'Later'],
+    this.dialog(
+      `Update available: v${info.version}, build ${info.build} (you're on build ${running || 'dev'}). ` +
+        (inRoom
+          ? "Updating reloads Spotify for a second, which drops you from the room. Rejoin after, same code."
+          : 'Updating reloads Spotify for a second.'),
       [
-        <Popup.Text key="t" text={`Update available: v${info.version} (build ${info.build}, you're on build ${running}).`} />,
-        <Popup.Text
-          key="n"
-          text={
-            inRoom
-              ? "Updating reloads Spotify for a second, which drops you from the room. Rejoin after, same code."
-              : 'Updating reloads Spotify for a second.'
-          }
-        />,
+        { label: 'Later', kind: 'ghost' },
+        {
+          label: 'Always auto-update',
+          onClick: () => {
+            settings.settings.updateMode = 'auto';
+            applyUpdate(settings, info.build);
+          },
+        },
+        { label: 'Update now', kind: 'primary', onClick: () => applyUpdate(settings, info.build) },
       ],
     );
   }
 
-  hostRequestPopup(name: string, allow: () => void) {
-    Popup.create(
-      'Listen Together',
-      (btn) => {
-        if (btn === 'Allow') allow();
-        Popup.close();
-      },
-      ['Allow'],
-      [<Popup.Text key="t" text={`${name} wants host controls (play, pause, skip, seek).`} />],
-    );
-  }
-
   windowMessage(message: string) {
-    Popup.create(
-      'Listen Together',
-      () => Popup.close(),
-      ['OK'],
-      [<Popup.Text text={message} />],
-    );
+    this.dialog(message, [{ label: 'OK', kind: 'primary' }]);
   }
 
   bottomMessage(message: string) {
@@ -266,24 +249,13 @@ export default class UI {
 
   disconnectedPopup() {
     const mode = this.ltPlayer.client.mode;
-    Popup.create(
-      'Listen Together',
-      (btn) => {
-        if (btn === 'Reconnect') {
-          this.ltPlayer.client.reconnect();
-        }
-        Popup.close();
-      },
-      ['Reconnect'],
+    this.dialog(
+      mode?.kind === 'join'
+        ? 'Lost the room. The host might have closed it, or their connection dropped.'
+        : 'Disconnected from the server.',
       [
-        <Popup.Text
-          key="t"
-          text={
-            mode?.kind === 'join'
-              ? 'Lost the room. The host might have closed it or their connection dropped.'
-              : 'Disconnected from the server.'
-          }
-        />,
+        { label: 'Close', kind: 'ghost' },
+        { label: 'Reconnect', kind: 'primary', onClick: () => this.ltPlayer.client.reconnect() },
       ],
     );
   }
@@ -293,199 +265,11 @@ export default class UI {
     if (client.connected || client.connecting || !address) return;
     // listentogether/K7QX2M links join a room, anything that looks like an address is a server
     if (!/[.:/]/.test(address) && cleanRoomCode(address).length === 6) {
-      client.joinRoom(address);
+      this.joinRoom(address);
       return;
     }
     this.ltPlayer.settingsManager.settings.server = address;
     this.ltPlayer.settingsManager.saveSettings();
-    if (!this.ltPlayer.settingsManager.settings.name) {
-      this.onClickJoinAServer();
-    } else {
-      this.ltPlayer.client.connect();
-    }
-  }
-
-  private onClickJoinAServer() {
-    if (this.ltPlayer.client.connected || this.ltPlayer.client.connecting) {
-      this.ltPlayer.client.disconnect();
-    } else {
-      this.joinServerPopup((btn, address, name, autoConnect) => {
-        if (btn === 'Host a server') {
-          // heroku killed the free tier in 2022, so this goes to the self host instructions instead
-          window.location.href = `https://github.com/${REPO}#using-a-server-instead`;
-        } else {
-          Popup.close();
-          if (!!address && !!name) {
-            this.ltPlayer.settingsManager.settings.server = address;
-            this.ltPlayer.settingsManager.settings.name = name;
-            this.ltPlayer.settingsManager.settings.autoConnect = autoConnect;
-            this.ltPlayer.settingsManager.saveSettings();
-            this.ltPlayer.client.connect();
-          }
-        }
-      });
-    }
-  }
-
-  private onClickRequestHost() {
-    if (this.ltPlayer.client.connected) {
-      if (this.ltPlayer.isHost) {
-        this.ltPlayer.client.socket?.emit('cancelHost');
-        Popup.close();
-      } else if (this.ltPlayer.client.mode?.kind === 'join') {
-        // rooms have no password, the owner gets a popup instead
-        this.ltPlayer.client.socket?.emit('requestHost');
-        this.bottomMessage('Asked the host for controls.');
-        Popup.close();
-      } else {
-        this.requestHostPopup((password) => {
-          if (!!password) {
-            this.ltPlayer.client.socket?.emit('requestHost', password);
-            this.ltPlayer.settingsManager.settings.password = password;
-            this.ltPlayer.settingsManager.saveSettings();
-          }
-          Popup.close();
-        });
-      }
-    } else {
-      this.windowMessage('Please connect to a server before requesting host.');
-    }
-  }
-
-  private syncOffsetPopup() {
-    Popup.create(
-      'Listen Together',
-      (btn) => {
-        if (btn === 'Reset') this.ltPlayer.setSyncOffset(0);
-        Popup.close();
-      },
-      ['Reset', 'Done'],
-      [
-        <Popup.Text text="Sync offset" />,
-        <Popup.Text text="Hearing the song later than everyone else? Slide right. Earlier? Slide left. Only changes it for you." />,
-        <Popup.Slider
-          label="Offset"
-          min={-1000}
-          max={1000}
-          step={10}
-          unit=" ms"
-          defaultValue={this.ltPlayer.syncOffset}
-          onCommit={(value) => this.ltPlayer.setSyncOffset(value)}
-        />,
-      ],
-    );
-  }
-
-  private onClickAbout() {
-    Popup.create(
-      'Listen Together',
-      () => {
-        Popup.close();
-      },
-      [],
-      [
-        <Popup.Text
-          key="v"
-          text={`Listen Together v${pJson.version} (build ${runningBuild() || 'dev'}) by citrus401.`}
-          centered={false}
-        />,
-        <Popup.Text
-          key="credit"
-          text="Based on Listen Together by FlafyDev, who made the original extension and server, and the fork by JanitorialMess."
-          centered={false}
-        />,
-        <Popup.Button
-          key="gh"
-          text={'GitHub'}
-          onClick={() => (window.location.href = `https://github.com/${REPO}`)}
-        />,
-        <Popup.Button
-          key="orig"
-          text={'Original by FlafyDev'}
-          onClick={() => (window.location.href = 'https://github.com/FlafyDev/spotify-listen-together')}
-        />,
-        <Popup.Button
-          key="kofi"
-          text={'Ko-fi'}
-          onClick={() => (window.location.href = 'https://ko-fi.com/citrus401')}
-        />,
-      ],
-    );
-  }
-
-  private joinServerPopup(
-    callback: (
-      btn: string | null,
-      address: string,
-      name: string,
-      autoConnect: boolean,
-    ) => void,
-  ) {
-    let address = '';
-    let name = '';
-    let autoConnect = false;
-    Popup.create(
-      'Listen Together',
-      (btn) => callback(btn, address, name, autoConnect),
-      ['Join', 'Host a server'],
-      [
-        <Popup.Textbox
-          name="Server address"
-          example="https://www.server.com/"
-          defaultValue={this.ltPlayer.settingsManager.settings.server}
-          onInput={(text) => {
-            address = text;
-          }}
-        />,
-        <Popup.Textbox
-          name="Your name"
-          example="Joe"
-          defaultValue={this.ltPlayer.settingsManager.settings.name}
-          onInput={(text) => {
-            name = text;
-          }}
-        />,
-        <Popup.Checkbox
-          label="Autoconnect"
-          defaultChecked={this.ltPlayer.settingsManager.settings.autoConnect}
-          onChange={(checked) => {
-            autoConnect = checked;
-          }}
-        />,
-      ],
-    );
-  }
-
-  private requestHostPopup(callback: (password: string) => void) {
-    let password = '';
-    Popup.create(
-      'Listen Together',
-      () => callback(password),
-      ['Request'],
-      [
-        <Popup.Text text="Request host" />,
-        <Popup.Textbox
-          name="Password"
-          defaultValue={this.ltPlayer.settingsManager.settings.password}
-          onInput={(text) => (password = text)}
-        />,
-      ],
-    );
-  }
-
-  convertJSXToString(jsxElement: JSX.Element): string {
-    const element = React.createElement(React.Fragment, null, jsxElement);
-    const container = document.createElement('div');
-    ReactDOM.render(element, container);
-    const htmlString = container.innerHTML;
-    ReactDOM.unmountComponentAtNode(container);
-    return htmlString;
-  }
-
-  renderBottomInfo(bottomInfo: JSX.Element) {
-    if (this.bottomInfoContainer) {
-      const htmlString = this.convertJSXToString(bottomInfo);
-      this.bottomInfoContainer.innerHTML = htmlString;
-    }
+    this.ltPlayer.client.connect();
   }
 }

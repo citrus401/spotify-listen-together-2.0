@@ -19,6 +19,8 @@ async function main() {
   const ltPlayer = new LTPlayer.default();
   const settings = ltPlayer.settingsManager.settings;
   (window as any).__listenTogetherReady = true;
+  // handy from devtools, and how the readme screenshots get made
+  (window as any).__listenTogether = ltPlayer;
   updater.startUpdateChecks(ltPlayer.settingsManager, ltPlayer.ui);
 
   if (
