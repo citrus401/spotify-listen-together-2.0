@@ -104,7 +104,41 @@ export function getTrackProgress() {
   return s.duration ? Math.min(now, Number(s.duration)) : now;
 }
 
-export function forcePlayTrack(trackUri: string): void {
+/** the playlist/album/etc a song plays from. uid = which row, playlists can have the same song twice */
+export type PlayContext = { uri: string; uid?: string };
+
+// what a friend can open too. liked songs, your episodes, local files etc are per account so they're out
+const SHAREABLE_CONTEXT = /^spotify:(playlist|album|artist|show):[A-Za-z0-9]+$/;
+
+export function isShareableContext(ctx: any): ctx is PlayContext {
+  return (
+    !!ctx &&
+    typeof ctx.uri === 'string' &&
+    SHAREABLE_CONTEXT.test(ctx.uri) &&
+    (ctx.uid === undefined || (typeof ctx.uid === 'string' && ctx.uid.length <= 64))
+  );
+}
+
+export function getShareableContext(): PlayContext | undefined {
+  const s = Spicetify.Platform.PlayerAPI._state;
+  const uri = s?.context?.uri;
+  if (!isShareableContext({ uri })) return undefined;
+  // row uids are only stable across accounts for playlists, albums etc go by the song alone
+  const uid = uri.startsWith('spotify:playlist:') ? s?.item?.uid : undefined;
+  return typeof uid === 'string' && uid ? { uri, uid } : { uri };
+}
+
+/*
+  plays the song inside its playlist/album when there is one, same call spotify's own ui makes. without it
+  whoever didn't start the playlist was on the song alone like a single, so skip just restarted it
+*/
+export function forcePlayTrack(trackUri: string, context?: PlayContext): void {
+  if (context && isShareableContext(context)) {
+    forcePlay({ uri: context.uri }, {}, {
+      skipTo: context.uid ? { uri: trackUri, uid: context.uid } : { uri: trackUri },
+    });
+    return;
+  }
   forcePlay({ uri: trackUri }, {}, {});
 }
 

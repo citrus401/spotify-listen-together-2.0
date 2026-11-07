@@ -4,6 +4,17 @@
 */
 
 export type ContextTrack = { uri: string; uid?: string | null; metadata?: any };
+/** playlist/album the room's song plays from, so everyone's spotify is in it and skip/prev work normally */
+type PlayContext = { uri: string; uid?: string };
+
+const SHAREABLE_CONTEXT = /^spotify:(playlist|album|artist|show):[A-Za-z0-9]+$/;
+
+// anyone can send anything, so only pass on contexts that look like the real thing
+function cleanContext(ctx: any): PlayContext | undefined {
+  if (!ctx || typeof ctx.uri !== 'string' || !SHAREABLE_CONTEXT.test(ctx.uri)) return undefined;
+  const uid = typeof ctx.uid === 'string' && ctx.uid.length <= 64 ? ctx.uid : undefined;
+  return uid ? { uri: ctx.uri, uid } : { uri: ctx.uri };
+}
 
 interface Member {
   id: string;
@@ -60,6 +71,7 @@ export function versionsCompatible(a: string, b: string) {
 export default class RoomHost {
   private members = new Map<string, Member>();
   private trackUri = '';
+  private context: PlayContext | undefined;
   private paused = true;
   private milliseconds = 0;
   private millisecondsLastUpdate = Date.now();
@@ -183,7 +195,7 @@ export default class RoomHost {
           if (this.locked)
             this.io.send(id, 'bottomMessage', 'Listen together is currently locked!');
           else if (this.reference) {
-            this.changeSongLive(uri);
+            this.changeSongLive(uri, undefined, cleanContext(args[2]));
           } else {
             this.changeSong(uri);
             // 2nd arg = start mid song, for when the host hits play on a song they already had open
@@ -368,8 +380,10 @@ export default class RoomHost {
     song change. that stuttered every song and killed crossfade. the owner just keeps playing and everyone
     else gets on the song and lines up live off the syncs. only = just these people (late joiners)
   */
-  private changeSongLive(trackUri: string, only?: Member[]) {
+  private changeSongLive(trackUri: string, only?: Member[], context?: PlayContext) {
     if (!isListenable(trackUri)) return;
+    // a new song brings its own context (or none). resyncs keep the one we have
+    if (!only) this.context = context;
     if (this.loadingTrack !== null) clearTimeout(this.loadingTrack);
     this.loadingTrack = null;
     this.trackUri = trackUri;
@@ -381,7 +395,7 @@ export default class RoomHost {
     (only ?? this.listeners()).forEach((l) => {
       // only targeted resyncs count, a normal song change for everyone isn't someone being off
       if (only) l.resyncedAt = now;
-      this.io.send(l.id, 'changeSong', trackUri);
+      this.io.send(l.id, 'changeSong', trackUri, this.context);
     });
   }
 
@@ -462,7 +476,7 @@ export default class RoomHost {
     this.locked = lock;
     if (!lock) {
       const host = this.listeners().find((l) => l.isHost);
-      if (this.reference) this.changeSongLive(host?.trackUri || this.trackUri);
+      if (this.reference) this.changeSongLive(host?.trackUri || this.trackUri, undefined, this.context);
       else this.changeSong(host?.trackUri || this.trackUri);
     }
     this.sendListeners();

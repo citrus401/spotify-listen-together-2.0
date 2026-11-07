@@ -8,8 +8,10 @@ import {
   forcePlayTrack,
   getCurrentTrackUri,
   getTrackData,
+  getShareableContext,
   getTrackProgress,
   getTrackType,
+  PlayContext,
   isListenableTrackType,
   isTrackPaused,
   pauseTrack,
@@ -120,7 +122,7 @@ export default class LTPlayer {
         // rooms: tell it the song, then the play/pause goes through the schedule like any other
         this.currentLoadingTrack = current;
         this.trackLoaded = true;
-        this.client.socket?.emit('loadingSong', current);
+        this.client.socket?.emit('loadingSong', current, 0, getShareableContext());
         this.client.socket?.emit('requestUpdateSong', paused, milliseconds);
       } else if (!paused) {
         // a server makes everyone load then start together
@@ -181,8 +183,17 @@ export default class LTPlayer {
     ogPlayerAPI.clearQueue();
   }
 
-  onChangeSong(trackUri: string) {
+  onChangeSong(trackUri: string, context?: PlayContext) {
     this.roomTrackUri = trackUri;
+    const play = () => {
+      forcePlayTrack(trackUri, context);
+      if (!context) return;
+      // a private or region locked playlist won't open for everyone. if we didn't land on the song, go solo
+      setTimeout(() => {
+        if (this.roomTrackUri === trackUri && getCurrentTrackUri() !== trackUri)
+          forcePlayTrack(trackUri);
+      }, 4000);
+    };
     if (this.transitionWait) clearTimeout(this.transitionWait);
     this.transitionWait = null;
 
@@ -205,12 +216,12 @@ export default class LTPlayer {
     ) {
       this.transitionWait = setTimeout(() => {
         this.transitionWait = null;
-        if (getCurrentTrackUri() !== trackUri) forcePlayTrack(trackUri);
+        if (getCurrentTrackUri() !== trackUri) play();
       }, Math.max(0, remaining) + 2500);
       return;
     }
 
-    forcePlayTrack(trackUri);
+    play();
   }
 
   /*
@@ -436,7 +447,8 @@ export default class LTPlayer {
     if (this.client.connected) {
       if (isListenableTrackType(getTrackType(trackUri))) {
         this.trackLoaded = false;
-        this.client.socket?.emit('loadingSong', trackUri);
+        // the node server only reads the first arg, rooms also take the playlist/album it's playing from
+        this.client.socket?.emit('loadingSong', trackUri, 0, getShareableContext());
 
         this.spotifyUtils.onTrackLoaded(trackUri!, () => {
           this.trackLoaded = true;

@@ -9,6 +9,7 @@ import {
   getTrackType,
   isListenableTrackType,
   isTrackPaused,
+  PlayContext,
 } from './utils/spotifyUtils';
 import { Transport } from './transport/transport';
 import { PeerHost, PeerJoin, cleanRoomCode } from './transport/peer';
@@ -143,9 +144,9 @@ export default class Client {
       console.log(`Receiving event "${ev}" with args: ${argsString}`);
     });
 
-    on('changeSong', (trackUri: string) => {
+    on('changeSong', (trackUri: string, context?: PlayContext) => {
       if (isListenableTrackType(getTrackType(trackUri)))
-        this.ltPlayer.onChangeSong(trackUri);
+        this.ltPlayer.onChangeSong(trackUri, context);
     });
 
     on('updateSong', (pause: boolean, milliseconds: number, at?: number) => {
