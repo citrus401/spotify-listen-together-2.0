@@ -6,8 +6,8 @@ name: build
 on:
   push:
     branches: [main]
-    # server and readme changes don't touch the extension, no point making everyone update for those
-    paths-ignore: ['server/**', '**.md']
+    # stuff that doesn't touch the extension, no point making everyone update for those
+    paths-ignore: ['server/**', '**.md', 'docs/**', 'LICENSE', 'render.yaml', '.github/FUNDING.yml']
   workflow_dispatch:
 
 permissions:
