@@ -69,6 +69,7 @@ export default class Client {
       trackUri: getCurrentTrackUri(),
       position: getTrackProgress() - this.ltPlayer.syncOffset,
       playing: !isTrackPaused(),
+      nextUri: Spicetify.Platform.PlayerAPI._state?.nextItems?.[0]?.uri,
     }));
     this.start({ kind: 'host', code: host.code }, host.self);
     return host.code;
@@ -147,15 +148,19 @@ export default class Client {
         this.ltPlayer.onChangeSong(trackUri);
     });
 
-    on('updateSong', (pause: boolean, milliseconds: number) => {
+    on('updateSong', (pause: boolean, milliseconds: number, at?: number) => {
       if (isListenableTrackType())
-        this.ltPlayer.onUpdateSong(pause, milliseconds);
+        this.ltPlayer.onUpdateSong(pause, milliseconds, at);
     });
 
-    on('syncPosition', (trackUri: string, milliseconds: number, hostTimestamp?: number) => {
-      if (isListenableTrackType())
+    on(
+      'syncPosition',
+      (trackUri: string, milliseconds: number, hostTimestamp?: number, nextUri?: string) => {
+        if (!isListenableTrackType()) return;
+        this.ltPlayer.mirrorNext(nextUri);
         this.ltPlayer.onSyncPosition(trackUri, milliseconds, hostTimestamp);
-    });
+      },
+    );
 
     on('bottomMessage', (message: string) => {
       this.ltPlayer.ui.bottomMessage(message);

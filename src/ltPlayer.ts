@@ -59,6 +59,12 @@ export default class LTPlayer {
   private lastCorrection = 0;
   /** last song the room told us about, '' till it does */
   private roomTrackUri = '';
+  /** song we just got on in a room, the first good sync lines us up right away instead of waiting */
+  private alignNext: string | null = null;
+  private transitionWait: ReturnType<typeof setTimeout> | null = null;
+  private mirroredNext = '';
+  private mirroredAt = 0;
+  private scheduled: ReturnType<typeof setTimeout> | null = null;
   private settleUntil = 0;
   private delayedResume: ReturnType<typeof setTimeout> | null = null;
 
@@ -97,6 +103,12 @@ export default class LTPlayer {
     this.client.socket?.emit('requestChangeSong', trackUri);
   }
 
+  /** p2p rooms sync to the owner's real playback, so song changes can happen live */
+  get liveRoom() {
+    const kind = this.client.mode?.kind;
+    return kind === 'host' || kind === 'join';
+  }
+
   requestUpdateSong(paused: boolean, milliseconds: number) {
     let trackType = getTrackType();
     const current = getCurrentTrackUri();
@@ -104,10 +116,16 @@ export default class LTPlayer {
     if (isListenableTrackType(trackType) && this.isHost && current !== this.roomTrackUri) {
       // the room only hears about songs on a track change, so a song that was already sitting there when
       // you hosted got ignored and play did nothing. tell it about the song first, it starts everyone from here
-      if (!paused) {
+      if (this.liveRoom) {
+        // rooms: tell it the song, then the play/pause goes through the schedule like any other
         this.currentLoadingTrack = current;
         this.trackLoaded = true;
-        // wait for the others to load it too, the room starts everyone at once
+        this.client.socket?.emit('loadingSong', current);
+        this.client.socket?.emit('requestUpdateSong', paused, milliseconds);
+      } else if (!paused) {
+        // a server makes everyone load then start together
+        this.currentLoadingTrack = current;
+        this.trackLoaded = true;
         pauseTrack();
         this.client.socket?.emit('loadingSong', current, milliseconds);
       }
@@ -165,12 +183,52 @@ export default class LTPlayer {
 
   onChangeSong(trackUri: string) {
     this.roomTrackUri = trackUri;
+    if (this.transitionWait) clearTimeout(this.transitionWait);
+    this.transitionWait = null;
+
     if (this.currentLoadingTrack === trackUri) {
       if (this.trackLoaded)
         this.client.socket?.emit('changedSong', this.currentLoadingTrack);
-    } else {
-      forcePlayTrack(trackUri);
+      if (this.liveRoom) this.alignNext = trackUri;
+      return;
     }
+
+    // the room moved to the song we're about to roll into anyway (host's song ended a hair before ours).
+    // let spotify change it itself so crossfade still happens, only force it if that doesn't come
+    const s = Spicetify.Platform.PlayerAPI._state;
+    const remaining = Spicetify.Player.getDuration() - getTrackProgress();
+    if (
+      this.liveRoom &&
+      !isTrackPaused() &&
+      s?.nextItems?.[0]?.uri === trackUri &&
+      remaining < 15000
+    ) {
+      this.transitionWait = setTimeout(() => {
+        this.transitionWait = null;
+        if (getCurrentTrackUri() !== trackUri) forcePlayTrack(trackUri);
+      }, Math.max(0, remaining) + 2500);
+      return;
+    }
+
+    forcePlayTrack(trackUri);
+  }
+
+  /*
+    friends keep the owner's next song at the top of their queue, so when a song ends both spotifys roll
+    into the same one at the same moment, crossfade and all. otherwise the friend's would play whatever
+    and get yanked over
+  */
+  mirrorNext(nextUri?: string) {
+    if (!nextUri || this.client.mode?.kind !== 'join') return;
+    const mine = Spicetify.Platform.PlayerAPI._state?.nextItems?.[0]?.uri;
+    if (mine === nextUri) return;
+    // spotify's state lags a bit after changing the queue, don't redo it every second
+    if (this.mirroredNext === nextUri && Date.now() - this.mirroredAt < 5000) return;
+    this.mirroredNext = nextUri;
+    this.mirroredAt = Date.now();
+    Promise.resolve(ogPlayerAPI.clearQueue?.())
+      .then(() => ogPlayerAPI.addToQueue?.([{ uri: nextUri }]))
+      .catch((e: any) => console.warn("[listenTogether] couldn't queue the host's next song", e));
   }
 
   get syncOffset() {
@@ -178,6 +236,8 @@ export default class LTPlayer {
   }
 
   private resetSync() {
+    if (this.scheduled) clearTimeout(this.scheduled);
+    this.scheduled = null;
     this.correcting = false;
     this.driftSamples = [];
     this.settleUntil = Date.now() + SETTLE_TIME;
@@ -185,7 +245,11 @@ export default class LTPlayer {
     this.delayedResume = null;
   }
 
-  onUpdateSong(pause: boolean, milliseconds?: number) {
+  onUpdateSong(pause: boolean, milliseconds?: number, at?: number) {
+    if (typeof at === 'number' && milliseconds != undefined && this.liveRoom) {
+      const hostNow = this.client.socket?.hostTime?.() ?? null;
+      if (hostNow !== null) return this.scheduleUpdate(pause, milliseconds, at - hostNow);
+    }
     this.resetSync();
 
     if (milliseconds == undefined) {
@@ -224,6 +288,59 @@ export default class LTPlayer {
     }
   }
 
+  /*
+    rooms: do it at the shared moment. wait > 0 = that moment is coming, wait <= 0 = it already happened on
+    the host's side (media keys etc), so jump to where they are now.
+    no seek lead on the scheduled ones, everyone eats the same seek stall at the same time
+  */
+  private scheduleUpdate(pause: boolean, milliseconds: number, wait: number) {
+    this.resetSync();
+    const offset = this.syncOffset;
+    const later = (fn: () => void) => {
+      if (wait <= 0) return fn();
+      this.scheduled = setTimeout(() => {
+        this.scheduled = null;
+        fn();
+      }, wait);
+    };
+    const settle = () => (this.settleUntil = Date.now() + SETTLE_TIME);
+
+    if (pause) {
+      later(() => {
+        pauseTrack();
+        const spot = Math.max(0, milliseconds + offset);
+        // only park on the exact spot if we're actually off, the owner usually already is
+        if (Math.abs(getTrackProgress() - spot) >= PRECISE.tolerance) ogPlayerAPI.seekTo(spot);
+      });
+      return;
+    }
+
+    if (isTrackPaused()) {
+      if (wait > 0) {
+        // park on the spot now, so at the moment all that's left is hitting play
+        ogPlayerAPI.seekTo(Math.max(0, milliseconds + offset));
+        later(() => {
+          resumeTrack();
+          settle();
+        });
+      } else {
+        ogPlayerAPI.seekTo(Math.max(0, milliseconds - wait + offset + this.seekLead));
+        resumeTrack();
+        settle();
+      }
+      return;
+    }
+
+    later(() => {
+      // re-read the moment it runs, for the catch up case the target's been moving
+      const target = milliseconds + Math.max(0, -wait) + offset;
+      if (Math.abs(getTrackProgress() - target) >= PRECISE.tolerance) {
+        ogPlayerAPI.seekTo(Math.max(0, target + (wait > 0 ? 0 : this.seekLead)));
+        settle();
+      }
+    });
+  }
+
   /**
    * hostTimestamp = when (host's clock) the host was at milliseconds. rooms send it, the node server doesn't,
    * and then milliseconds is just where an in sync listener is when this lands
@@ -233,7 +350,8 @@ export default class LTPlayer {
     if (this.client.mode?.kind === 'host') return;
     if (!this.trackLoaded || this.delayedResume) return;
     if (getCurrentTrackUri() !== trackUri || isTrackPaused()) return;
-    if (Date.now() < this.settleUntil) return;
+    // a fresh song gets lined up on the first reading, the settle wait is for after seeks
+    if (Date.now() < this.settleUntil && this.alignNext !== trackUri) return;
 
     const hostNow =
       typeof hostTimestamp === 'number' ? this.client.socket?.hostTime?.() ?? null : null;
@@ -263,14 +381,19 @@ export default class LTPlayer {
       this.driftSamples.length >= 2 &&
       this.driftSamples.slice(-2).every((d) => Math.abs(d) > BIG_DRIFT);
 
-    if (!bigJump) {
+    // just got on a new song: line up on the first clean reading instead of waiting for 5
+    const aligning = precise && this.alignNext === trackUri;
+    if (aligning) this.alignNext = null;
+    const alignNow = aligning && Math.abs(drift) >= cfg.tolerance;
+
+    if (!bigJump && !alignNow) {
       if (this.driftSamples.length < cfg.samples) return;
       if (Math.abs(median) < cfg.tolerance) return;
       if (Date.now() - this.lastCorrection < cfg.cooldown) return;
     }
 
     console.log(
-      `[listenTogether] ${Math.round(median)}ms off (${precise ? 'precise' : 'loose'}), seeking with ${Math.round(this.seekLead)}ms lead`,
+      `[listenTogether] ${Math.round(alignNow ? drift : median)}ms off (${alignNow ? 'new song' : precise ? 'precise' : 'loose'}), seeking with ${Math.round(this.seekLead)}ms lead`,
     );
     ogPlayerAPI.seekTo(target + this.seekLead);
     this.correcting = true;
@@ -317,8 +440,13 @@ export default class LTPlayer {
 
         this.spotifyUtils.onTrackLoaded(trackUri!, () => {
           this.trackLoaded = true;
-          pauseTrack();
-          ogPlayerAPI.seekTo(0);
+          if (this.liveRoom) {
+            // keep playing, the first sync lines us up (and the owner is the reference anyway)
+            this.alignNext = trackUri!;
+          } else {
+            pauseTrack();
+            ogPlayerAPI.seekTo(0);
+          }
 
           // Extract image url safely
           const imageUrl =

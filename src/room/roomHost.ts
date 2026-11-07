@@ -13,6 +13,8 @@ interface Member {
   trackUri: string;
   /** one way ms, half the ping */
   latency: number;
+  /** last time we told this one to get on the room's song, so a client that can't play it doesn't get spammed */
+  resyncedAt: number;
 }
 
 export interface RoomHostIO {
@@ -20,13 +22,30 @@ export interface RoomHostIO {
 }
 
 /** where the owner's player actually is. null if it can't say */
-export type Reference = () => { trackUri: string; position: number; playing: boolean } | null;
+export type Reference = () => {
+  trackUri: string;
+  position: number;
+  playing: boolean;
+  /** what the owner's spotify plays next, friends queue it so their song changes line up (crossfade) */
+  nextUri?: string;
+} | null;
 
 // same numbers the node server uses
 const MAX_DELAY = 5000;
 const SYNC_INTERVAL = 3000;
 // rooms with a reference send timestamped positions, cheap enough to do every second for tighter sync
 const REFERENCE_SYNC_INTERVAL = 1000;
+// a client that can't play the room's song (region locked etc) would get told to every time it reports
+const RESYNC_COOLDOWN = 5000;
+// play/pause/seek in rooms get scheduled this far past the slowest friend's one way delay, so everyone does
+// it at the same moment instead of the host first and friends a network trip later. capped so a laggy
+// friend can't make the play button feel dead
+const SCHEDULE_MARGIN = 60;
+const MAX_SCHEDULE = 500;
+// how often the owner's actual player gets checked for stuff we didn't see coming (media keys, phone, etc)
+const WATCH_INTERVAL = 250;
+// a jump this big between two checks = the owner seeked somehow
+const EXTERNAL_SEEK = 1500;
 
 function isListenable(uri: string) {
   return uri.startsWith('spotify:track:') || uri.startsWith('spotify:episode:');
@@ -49,6 +68,10 @@ export default class RoomHost {
   private loadAtMilliseconds = 0;
   private loadAtTime = 0;
   private resumeLive = false;
+  private recheckTimer: ReturnType<typeof setTimeout> | null = null;
+  private watchTimer: ReturnType<typeof setInterval> | null = null;
+  /** a scheduled action is still landing, the watcher and syncs keep out till then */
+  private pendingUntil = 0;
   private queue: ContextTrack[] = [];
   private syncTimer: ReturnType<typeof setInterval>;
 
@@ -67,11 +90,14 @@ export default class RoomHost {
       () => this.syncListeners(),
       reference ? REFERENCE_SYNC_INTERVAL : SYNC_INTERVAL,
     );
+    if (reference) this.watchTimer = setInterval(() => this.watchOwner(), WATCH_INTERVAL);
   }
 
   close() {
     clearInterval(this.syncTimer);
     if (this.loadingTrack) clearTimeout(this.loadingTrack);
+    if (this.recheckTimer) clearTimeout(this.recheckTimer);
+    if (this.watchTimer) clearInterval(this.watchTimer);
   }
 
   addMember(id: string) {
@@ -83,6 +109,7 @@ export default class RoomHost {
       loggedIn: false,
       trackUri: '',
       latency: 0,
+      resyncedAt: 0,
     });
   }
 
@@ -141,6 +168,12 @@ export default class RoomHost {
         if (!m.isHost) return;
         if (this.locked)
           this.io.send(id, 'bottomMessage', 'Listen together is currently locked!');
+        else if (this.reference)
+          this.updateSongAt(
+            !!args[0],
+            Number(args[1]) || 0,
+            Date.now() + Math.min(MAX_SCHEDULE, this.maxLatency() + SCHEDULE_MARGIN),
+          );
         else this.updateSong(!!args[0], Number(args[1]) || 0);
         return;
 
@@ -149,7 +182,9 @@ export default class RoomHost {
         if (m.isHost && uri !== this.trackUri) {
           if (this.locked)
             this.io.send(id, 'bottomMessage', 'Listen together is currently locked!');
-          else {
+          else if (this.reference) {
+            this.changeSongLive(uri);
+          } else {
             this.changeSong(uri);
             // 2nd arg = start mid song, for when the host hits play on a song they already had open
             this.loadAtMilliseconds = Math.max(0, Number(args[1]) || 0);
@@ -213,7 +248,7 @@ export default class RoomHost {
   private getTrackProgress() {
     return this.paused
       ? this.milliseconds
-      : this.milliseconds + (Date.now() - this.millisecondsLastUpdate);
+      : this.milliseconds + Math.max(0, Date.now() - this.millisecondsLastUpdate);
   }
 
   private maxLatency() {
@@ -264,15 +299,59 @@ export default class RoomHost {
 
     // with a reference: the owner's position + when it was read (owner's clock). friends match clocks with
     // the owner, so network delay and jitter just don't matter. sent straight out, no delaying
-    const at = Date.now();
-    const ref = this.reference?.();
-    if (ref && ref.playing && ref.trackUri === this.trackUri) {
+    if (this.reference) {
+      const at = Date.now();
+      if (at < this.pendingUntil) return;
+      const ref = this.reference();
+      // no clock fallback here. if the owner isn't playing the room's song right now there's nothing true to send
+      if (!ref || !ref.playing || ref.trackUri !== this.trackUri) return;
       this.listeners().forEach((l) =>
-        this.io.send(l.id, 'syncPosition', this.trackUri, ref.position, at),
+        this.io.send(l.id, 'syncPosition', this.trackUri, ref.position, at, ref.nextUri || ''),
       );
       return;
     }
     this.emitToListeners('syncPosition', this.trackUri, this.getTrackProgress());
+  }
+
+  /*
+    "at host time `at` the song is at `milliseconds`, paused or playing from then on". at in the future =
+    everyone does it at that moment. at in the past = it already happened on the owner's side, catch up.
+    sent straight to everyone, the timestamp does the timing
+  */
+  private updateSongAt(pause: boolean, milliseconds: number, at: number) {
+    if (this.loadingTrack !== null || !isListenable(this.trackUri)) return;
+    this.paused = pause;
+    this.milliseconds = milliseconds;
+    this.millisecondsLastUpdate = at;
+    this.loadAtMilliseconds = 0;
+    this.pendingUntil = Math.max(at, Date.now()) + 800;
+    this.listeners().forEach((l) => this.io.send(l.id, 'updateSong', pause, milliseconds, at));
+  }
+
+  /*
+    the owner's player is the truth, so anything they do gets noticed here even if it never went through our
+    buttons: media keys, the mini player, their phone as a remote, the sleep timer
+  */
+  private watchOwner() {
+    if (this.locked || this.loadingTrack !== null || !isListenable(this.trackUri)) return;
+    const now = Date.now();
+    if (now < this.pendingUntil) return;
+    const ref = this.reference?.();
+    if (!ref || ref.trackUri !== this.trackUri) return;
+
+    if (ref.playing === this.paused) {
+      this.updateSongAt(!ref.playing, ref.position, now);
+      return;
+    }
+    if (ref.playing && Math.abs(ref.position - this.getTrackProgress()) > EXTERNAL_SEEK) {
+      this.updateSongAt(false, ref.position, now);
+      return;
+    }
+    // nothing happened, re-anchor so slow drift (buffering hiccups) never adds up to a fake "seek"
+    if (ref.playing) {
+      this.milliseconds = ref.position;
+      this.millisecondsLastUpdate = now;
+    }
   }
 
   private updateSong(pause: boolean, milliseconds: number) {
@@ -282,6 +361,28 @@ export default class RoomHost {
     this.millisecondsLastUpdate = Date.now();
     this.loadAtMilliseconds = 0;
     this.emitToListeners('updateSong', this.paused, milliseconds);
+  }
+
+  /*
+    rooms with a reference don't do the pause, rewind to 0, wait for everyone, play together dance on every
+    song change. that stuttered every song and killed crossfade. the owner just keeps playing and everyone
+    else gets on the song and lines up live off the syncs. only = just these people (late joiners)
+  */
+  private changeSongLive(trackUri: string, only?: Member[]) {
+    if (!isListenable(trackUri)) return;
+    if (this.loadingTrack !== null) clearTimeout(this.loadingTrack);
+    this.loadingTrack = null;
+    this.trackUri = trackUri;
+    const ref = this.reference?.();
+    this.paused = !(ref?.playing ?? true);
+    this.milliseconds = ref && ref.trackUri === trackUri ? ref.position : 0;
+    this.millisecondsLastUpdate = Date.now();
+    const now = Date.now();
+    (only ?? this.listeners()).forEach((l) => {
+      // only targeted resyncs count, a normal song change for everyone isn't someone being off
+      if (only) l.resyncedAt = now;
+      this.io.send(l.id, 'changeSong', trackUri);
+    });
   }
 
   private changeSong(trackUri: string) {
@@ -305,6 +406,29 @@ export default class RoomHost {
 
   private checkDesynchronizedListeners() {
     if (this.loadingTrack !== null) return;
+    if (this.reference) {
+      const next = this.reference()?.nextUri;
+      const now = Date.now();
+      const off = this.listeners().filter(
+        (l) =>
+          l.trackUri !== this.trackUri &&
+          // already on the owner's next song = their spotify just changed a bit early, the owner's is about to
+          !(next && l.trackUri === next),
+      );
+      const due = off.filter((l) => now - l.resyncedAt >= RESYNC_COOLDOWN);
+      if (due.length) this.changeSongLive(this.trackUri, due);
+      // the rest got told very recently. look again when that runs out, or they'd sit on the wrong song
+      // till they happen to report again
+      const waiting = off.filter((l) => now - l.resyncedAt < RESYNC_COOLDOWN);
+      if (waiting.length && !this.recheckTimer) {
+        const wait = Math.min(...waiting.map((l) => RESYNC_COOLDOWN - (now - l.resyncedAt)));
+        this.recheckTimer = setTimeout(() => {
+          this.recheckTimer = null;
+          if (!this.locked) this.checkDesynchronizedListeners();
+        }, wait + 50);
+      }
+      return;
+    }
     if (this.listeners().some((l) => l.trackUri !== this.trackUri)) {
       this.loadAtMilliseconds = this.referenceAtArrival() ?? this.getTrackProgress();
       this.loadAtTime = Date.now();
@@ -338,7 +462,8 @@ export default class RoomHost {
     this.locked = lock;
     if (!lock) {
       const host = this.listeners().find((l) => l.isHost);
-      this.changeSong(host?.trackUri || this.trackUri);
+      if (this.reference) this.changeSongLive(host?.trackUri || this.trackUri);
+      else this.changeSong(host?.trackUri || this.trackUri);
     }
     this.sendListeners();
   }
