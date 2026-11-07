@@ -6,6 +6,13 @@ import { Popup } from './popup';
 import iconSvg from './ListenTogetherIcon';
 import pJson from '../../package.json';
 import { cleanRoomCode } from '../transport/peer';
+import {
+  applyUpdate,
+  BuildInfo,
+  checkForUpdates,
+  REPO,
+  runningBuild,
+} from '../utils/updater';
 
 import '../css/ui.scss';
 export default class UI {
@@ -50,11 +57,30 @@ export default class UI {
   openMenu() {
     const client = this.ltPlayer.client;
     const code = client.roomCode;
+    const mode = this.ltPlayer.settingsManager.settings.updateMode;
     const common = [
       <Popup.Button
         key="offset"
         text={'Sync offset'}
         onClick={() => this.syncOffsetPopup()}
+      />,
+      <Popup.Button
+        key="updmode"
+        text={`Updates: ${{ ask: 'just tell me', auto: 'automatic', off: 'off' }[mode]}`}
+        onClick={() => {
+          const next = ({ ask: 'auto', auto: 'off', off: 'ask' } as const)[mode];
+          this.ltPlayer.settingsManager.settings.updateMode = next;
+          this.ltPlayer.settingsManager.saveSettings();
+          this.openMenu();
+        }}
+      />,
+      <Popup.Button
+        key="updcheck"
+        text={'Check for updates'}
+        onClick={() => {
+          Popup.close();
+          checkForUpdates(this.ltPlayer.settingsManager, this, true);
+        }}
       />,
       <Popup.Button key="about" text={'About'} onClick={() => this.onClickAbout()} />,
     ];
@@ -180,6 +206,34 @@ export default class UI {
           name="Your name"
           defaultValue={name}
           onInput={(text) => (name = text)}
+        />,
+      ],
+    );
+  }
+
+  updatePopup(info: BuildInfo, running: number) {
+    const settings = this.ltPlayer.settingsManager;
+    const inRoom = this.ltPlayer.client.connected;
+    Popup.create(
+      'Listen Together',
+      (btn) => {
+        Popup.close();
+        if (btn === 'Update now') applyUpdate(settings, info.build);
+        if (btn === 'Always auto-update') {
+          settings.settings.updateMode = 'auto';
+          applyUpdate(settings, info.build);
+        }
+      },
+      ['Update now', 'Always auto-update', 'Later'],
+      [
+        <Popup.Text key="t" text={`Update available: v${info.version} (build ${info.build}, you're on build ${running}).`} />,
+        <Popup.Text
+          key="n"
+          text={
+            inRoom
+              ? "Updating reloads Spotify for a second, which drops you from the room. Rejoin after, same code."
+              : 'Updating reloads Spotify for a second.'
+          }
         />,
       ],
     );

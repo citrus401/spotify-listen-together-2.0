@@ -9,10 +9,17 @@ async function main() {
     return;
   }
 
+  // a newer build you said yes to runs instead of this file, see utils/updater
+  const { default: SettingsManager } = await import('./utils/settings');
+  const updater = await import('./utils/updater');
+  if (await updater.loadAcceptedBuild(new SettingsManager(Spicetify.LocalStorage))) return;
+
   // Lazy import because we have to wait for the API to load
   const LTPlayer = await import('./ltPlayer');
   const ltPlayer = new LTPlayer.default();
   const settings = ltPlayer.settingsManager.settings;
+  (window as any).__listenTogetherReady = true;
+  updater.startUpdateChecks(ltPlayer.settingsManager, ltPlayer.ui);
 
   if (
     settings.autoConnect &&

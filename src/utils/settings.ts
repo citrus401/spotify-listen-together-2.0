@@ -12,6 +12,10 @@ class Settings {
   autoConnect: boolean;
   /** ms, + = play ahead of the room, - = behind. per person, never sent to the server */
   syncOffset: number;
+  /** ask = just tells you, auto = grabs it and uses it next start, off = never checks */
+  updateMode: 'ask' | 'auto' | 'off';
+  /** newest build the user said yes to, loaded at startup if it's newer than the installed file */
+  acceptedBuild: number;
 
   constructor({
     settingsVersion = '1',
@@ -21,6 +25,8 @@ class Settings {
     password = '',
     autoConnect = false,
     syncOffset = 0,
+    updateMode = 'ask',
+    acceptedBuild = 0,
   }: Partial<Settings> = {}) {
     this.settingsVersion = settingsVersion;
     this.server = server;
@@ -29,6 +35,8 @@ class Settings {
     this.password = password;
     this.autoConnect = autoConnect;
     this.syncOffset = Number.isFinite(syncOffset) ? syncOffset : 0;
+    this.updateMode = ['ask', 'auto', 'off'].includes(updateMode) ? updateMode : 'ask';
+    this.acceptedBuild = Number.isInteger(acceptedBuild) ? acceptedBuild : 0;
   }
 }
 

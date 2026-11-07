@@ -1,0 +1,42 @@
+# every push to main gets built and dropped on the build branch, that's what the in-app updater reads.
+# build branch = version.json + listenTogether.js (newest) + builds/<n>.js (last 30, so "ask" mode can load
+# exactly the one you said yes to)
+name: build
+
+on:
+  push:
+    branches: [main]
+    # server and readme changes don't touch the extension, no point making everyone update for those
+    paths-ignore: ['server/**', '**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# two quick pushes would race each other onto the build branch
+concurrency: build
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: install
+        run: npx --yes yarn@1.22.22 install --frozen-lockfile --ignore-scripts
+
+      - name: stamp the build number
+        run: echo "{ \"build\": ${{ github.run_number }}, \"sha\": \"${GITHUB_SHA}\" }" > src/build.json
+
+      - name: build
+        run: npx spicetify-creator --out=out --minify
+
+      - name: publish to the build branch
+        env:
+          RUN: ${{ github.run_number }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/publish-build.sh out/listenTogether.js
