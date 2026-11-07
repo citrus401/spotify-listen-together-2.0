@@ -17,7 +17,7 @@ export class RemoveFromQueueCommand implements Command {
   }
 
   notifyRestriction() {
-    Spicetify.showNotification('Only the hosts can update the queue!');
+    Spicetify.showNotification(`Only ${this.ltPlayer.whoCanControl} can update the queue!`);
   }
 
   specialAction() {

@@ -413,12 +413,16 @@ function RoomView({ api, st, onSettings }: { api: PanelApi; st: PanelState; onSe
               </span>
               <span className="lt-person__badges">
                 {p.watchingAD && <Badge tone="amber">On an ad</Badge>}
-                {p.isHost && (
-                  <Badge tone="green">
-                    <Icons.crown size={12} />
-                    Host
-                  </Badge>
-                )}
+                {/* rooms: the crown is whoever made it, friends they let on the controls are co-hosts */}
+                {p.isHost &&
+                  (p.owner || isServer ? (
+                    <Badge tone="green">
+                      <Icons.crown size={12} />
+                      Host
+                    </Badge>
+                  ) : (
+                    <Badge tone="green">Co-host</Badge>
+                  ))}
                 {isMe(p) && <Badge>You</Badge>}
               </span>
             </li>
@@ -463,12 +467,12 @@ function RoomView({ api, st, onSettings }: { api: PanelApi; st: PanelState; onSe
             onClick={() => (isServer ? setAskingPassword(true) : api.requestHost())}
           >
             <Icons.crown />
-            Request host
+            {isServer ? 'Request host' : 'Ask to co-host'}
           </button>
         )}
         {!owner && st.isHost && (
           <button className="lt-btn lt-btn--secondary" onClick={() => api.stopHosting()}>
-            Stop hosting
+            {isServer ? 'Stop hosting' : 'Stop co-hosting'}
           </button>
         )}
         <button className="lt-btn lt-btn--danger" onClick={() => api.leave()}>

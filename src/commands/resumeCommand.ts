@@ -19,7 +19,7 @@ export class ResumeCommand implements Command {
   }
 
   notifyRestriction() {
-    Spicetify.showNotification('Only the hosts can resume songs!');
+    Spicetify.showNotification(`Only ${this.ltPlayer.whoCanControl} can resume songs!`);
   }
 
   specialAction() {

@@ -303,6 +303,11 @@ export default class LTPlayer {
     return this.client.mode?.kind === 'host';
   }
 
+  /** rooms: whoever made it is the host, anyone they let on the controls is a co-host. the server just has hosts */
+  get whoCanControl() {
+    return this.liveRoom ? 'the host and co-hosts' : 'the hosts';
+  }
+
   /** p2p rooms sync to the owner's real playback, so song changes can happen live */
   get liveRoom() {
     const kind = this.client.mode?.kind;
@@ -408,6 +413,13 @@ export default class LTPlayer {
     };
     if (this.transitionWait) clearTimeout(this.transitionWait);
     this.transitionWait = null;
+
+    /*
+      a co-host skipped. they play our copy of the owner's up next, which isn't the owner's playlist, so
+      the song came without one and the owner played it on its own: playlist and queue gone, for everyone. one
+      that's in the owner's up next (or the one just before) gets skipped to right there instead
+    */
+    if (this.client.mode?.kind === 'host' && getCurrentTrackUri() !== trackUri && this.skipInQueue(trackUri)) return;
 
     // already on it (rejoined, or had it open): playing it again would restart it at 0, and since the song
     // didn't change spotify never says so, so the room kept sending it every 5 s and it kept restarting.
@@ -533,6 +545,27 @@ export default class LTPlayer {
     }
     // one at a time, a single add doesn't touch that cached copy at all
     for (const uri of want.slice(tail ? mine.length : 0)) await ogPlayerAPI.addToQueue([{ uri }]);
+  }
+
+  /** skips to uri inside the queue we already have, next or the one just before. false = it isn't there */
+  private skipInQueue(uri: string) {
+    const P = Spicetify.Platform.PlayerAPI;
+    const q = P._queue?._queue;
+    if (!q) return false;
+    const next = (q.nextTracks ?? []).find((t: any) => t?.contextTrack?.uri === uri && !t?.blocked?.length);
+    const prev = (q.prevTracks ?? [])[(q.prevTracks ?? []).length - 1];
+    let go: (() => any) | null = null;
+    if (next) go = () => ogPlayerAPI.skipToNext({ uri, uid: next.contextTrack.uid });
+    // spotify's own previous restarts the song when it's 3 s in, a friend's previous means the song before
+    else if (prev?.contextTrack?.uri === uri && P._contextPlayer?.skipPrev)
+      go = () => P._contextPlayer.skipPrev({ allowSeeking: false, loggingParams: {} });
+    if (!go) return false;
+    this.ownCommand++;
+    Promise.resolve()
+      .then(go)
+      .catch((e: any) => console.warn("[listenTogether] couldn't skip in the queue", e))
+      .finally(() => this.ownCommand--);
+    return true;
   }
 
   /** the owner's whole up next, every time it changes */
@@ -1294,7 +1327,7 @@ export default class LTPlayer {
       if (isListenableTrackType(getTrackType(trackUri))) {
         this.trackLoaded = false;
         /*
-          a friend who's a host only changes the room's song when they picked one. their spotify rolling into the
+          a co-host only changes the room's song when they picked one. their spotify rolling into the
           next song on its own is just the song ending a hair before the owner's, and passing that on made the
           owner skip early and everyone jump, every single song
         */

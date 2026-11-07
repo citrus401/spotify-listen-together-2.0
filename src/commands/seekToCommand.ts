@@ -22,7 +22,7 @@ export class SeekToCommand implements Command {
   }
 
   notifyRestriction() {
-    Spicetify.showNotification('Only the hosts can seek songs!');
+    Spicetify.showNotification(`Only ${this.ltPlayer.whoCanControl} can seek songs!`);
   }
 
   specialAction() {

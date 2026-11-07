@@ -19,7 +19,7 @@ export class PauseCommand implements Command {
   }
 
   notifyRestriction() {
-    Spicetify.showNotification('Only the hosts can pause songs!');
+    Spicetify.showNotification(`Only ${this.ltPlayer.whoCanControl} can pause songs!`);
   }
 
   specialAction() {

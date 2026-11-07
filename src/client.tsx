@@ -215,10 +215,12 @@ export default class Client {
     on('isHost', (isHost: boolean) => {
       if (isHost != this.ltPlayer.isHost) {
         this.ltPlayer.isHost = isHost;
+        // in a room only whoever made it is the host, a friend on the controls is a co-host
+        const cohost = this.mode?.kind === 'join';
         if (isHost) {
-          this.ltPlayer.ui.bottomMessage('You are now a host.');
+          this.ltPlayer.ui.bottomMessage(cohost ? "You're a co-host now." : 'You are now a host.');
         } else {
-          this.ltPlayer.ui.bottomMessage('You are no longer a host.');
+          this.ltPlayer.ui.bottomMessage(cohost ? "You're not a co-host anymore." : 'You are no longer a host.');
         }
         this.ltPlayer.ui.changed();
       }

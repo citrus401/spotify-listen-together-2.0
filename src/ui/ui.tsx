@@ -266,7 +266,7 @@ export default class UI implements PanelApi {
   }
 
   hostRequestPopup(name: string, allow: () => void) {
-    this.dialog(`${name} wants host controls (play, pause, skip, seek).`, [
+    this.dialog(`${name} wants to co-host (play, pause, skip, seek).`, [
       { label: 'Not now', kind: 'ghost' },
       { label: 'Allow', kind: 'primary', onClick: allow },
     ]);

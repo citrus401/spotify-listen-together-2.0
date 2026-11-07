@@ -211,7 +211,7 @@ export default class RoomHost {
         const target = this.members.get(args[0]);
         if (id === this.ownerId && target) {
           this.updateHost(target, true);
-          this.io.send(target.id, 'bottomMessage', 'Host permissions acquired.');
+          this.io.send(target.id, 'bottomMessage', 'Co-host controls granted.');
         }
         return;
       }
@@ -239,7 +239,10 @@ export default class RoomHost {
           if (this.locked)
             this.io.send(id, 'bottomMessage', 'Listen together is currently locked!');
           else if (this.reference) {
-            this.changeSongLive(uri, undefined, cleanContext(args[2]));
+            // a friend on our copy of the owner's up next has no playlist of its own to send. a song from the
+            // owner's up next is still the owner's playlist
+            const fromUpNext = id !== this.ownerId && !!this.ownerUpNext?.some((i) => i.uri === uri);
+            this.changeSongLive(uri, undefined, cleanContext(args[2]) ?? (fromUpNext ? this.context : undefined));
           } else {
             this.changeSong(uri);
             // 2nd arg = start mid song, for when the host hits play on a song they already had open

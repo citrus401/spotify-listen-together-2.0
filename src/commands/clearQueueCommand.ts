@@ -14,7 +14,7 @@ export class ClearQueueCommand implements Command {
   }
 
   notifyRestriction() {
-    Spicetify.showNotification('Only the hosts can clear the queue!');
+    Spicetify.showNotification(`Only ${this.ltPlayer.whoCanControl} can clear the queue!`);
   }
 
   specialAction() {

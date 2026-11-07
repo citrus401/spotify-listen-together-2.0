@@ -22,7 +22,7 @@ export class PlayCommand implements Command {
   }
 
   notifyRestriction() {
-    Spicetify.showNotification('Only the hosts can change songs!');
+    Spicetify.showNotification(`Only ${this.ltPlayer.whoCanControl} can change songs!`);
   }
 
   specialAction() {
