@@ -48,6 +48,8 @@ export type Reference = () => {
   nextUri?: string;
   /** what the owner's spotify plays next, in order (what they queued, then the playlist's next songs) */
   queue?: string[];
+  /** all of it, with rows and what's queued by hand, so friends can have the exact same up next */
+  upNext?: { uri: string; uid?: string; q?: boolean }[];
   /** false = spotify's position is known to be off right now (just after a song start or a seek), don't line up to it */
   settled?: boolean;
 } | null;
@@ -60,10 +62,11 @@ const REFERENCE_SYNC_INTERVAL = 500;
 // a client that can't play the room's song (region locked etc) would get told to every time it reports
 const RESYNC_COOLDOWN = 5000;
 // play/pause/seek in rooms get scheduled this far past the slowest friend's one way delay, so everyone does
-// it at the same moment instead of the host first and friends a network trip later. capped so a laggy
-// friend can't make the play button feel dead
-const SCHEDULE_MARGIN = 60;
-const MAX_SCHEDULE = 500;
+// it at the same moment instead of the host first and friends a network trip later. a minimized spotify needs
+// ~150-250 ms to pause and park first, with 60 the owner kept resuming 5-14 ms late. capped so a laggy friend
+// can't make the play button feel dead
+const SCHEDULE_MARGIN = 300;
+const MAX_SCHEDULE = 700;
 // how often the owner's actual player gets checked for stuff we didn't see coming (media keys, phone, etc)
 const WATCH_INTERVAL = 250;
 // a jump this big between two checks = the owner seeked somehow
@@ -80,6 +83,20 @@ function queueItems(items: any[]) {
     .filter((t) => t && typeof t.uri === 'string' && isListenable(t.uri))
     .slice(0, MAX_QUEUE)
     .map((t) => ({ uri: t.uri as string }));
+}
+
+// the whole up next. spotify shows ~80 plus whatever's queued by hand
+const MAX_UP_NEXT = 150;
+type UpNext = { uri: string; uid?: string; q?: boolean };
+function cleanUpNext(items: any[]): UpNext[] {
+  return items
+    .filter((t) => t && typeof t.uri === 'string' && isListenable(t.uri))
+    .slice(0, MAX_UP_NEXT)
+    .map((t) => {
+      if (t.q === true) return { uri: t.uri, q: true };
+      const uid = typeof t.uid === 'string' && /^[\w-]{1,64}$/.test(t.uid) ? t.uid : undefined;
+      return uid ? { uri: t.uri, uid } : { uri: t.uri };
+    });
 }
 
 export function versionsCompatible(a: string, b: string) {
@@ -107,6 +124,9 @@ export default class RoomHost {
   private queue: ContextTrack[] = [];
   /** last owner queue friends were sent, null till it's been read once */
   private ownerQueue: string[] | null = null;
+  /** same for the whole up next (newer friends), and what it was last time */
+  private ownerUpNext: UpNext[] | null = null;
+  private upNextKey = '';
   private syncTimer: ReturnType<typeof setInterval>;
 
   /**
@@ -178,6 +198,7 @@ export default class RoomHost {
         this.sendListeners();
         if (!this.reference) this.io.send(id, 'queueUpdate', this.queue);
         else if (id !== this.ownerId && this.ownerQueue) this.io.send(id, 'queueSync', this.ownerQueue);
+        if (this.reference && id !== this.ownerId && this.ownerUpNext) this.io.send(id, 'upNext', this.ownerUpNext);
         return;
       }
 
@@ -458,6 +479,18 @@ export default class RoomHost {
 
   /** the owner's queue changed (queued, removed, played through, dragged around): everyone else gets the new one */
   private watchQueue(ref: ReturnType<Reference> | undefined) {
+    if (Array.isArray(ref?.upNext)) {
+      const up = cleanUpNext(ref!.upNext);
+      const key = up.map((i) => `${i.q ? 'q' : ''}${i.uri}${i.uid ?? ''}`).join(' ');
+      if (key !== this.upNextKey) {
+        this.upNextKey = key;
+        this.ownerUpNext = up;
+        this.listeners().forEach((l) => {
+          if (l.id !== this.ownerId) this.io.send(l.id, 'upNext', up);
+        });
+      }
+    }
+    // older friends only know this one
     if (!Array.isArray(ref?.queue)) return;
     const queue = ref!.queue.filter((uri) => typeof uri === 'string' && isListenable(uri)).slice(0, MAX_QUEUE);
     const last = this.ownerQueue;

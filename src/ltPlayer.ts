@@ -20,60 +20,78 @@ import {
   resumeTrack,
   SpotifyUtils,
   TrackType,
+  UpNext,
 } from './utils/spotifyUtils';
 
 const AD_CHECK_INTERVAL = 2000;
 /*
   spotify won't change speed on music (setSpeed says not_supported_by_content_type) and has no ducking on
-  desktop, so every correction is a jump of some kind. measured on 1.3.8:
-  - a plain seek while playing: 125-200 ms of silence, lands anywhere within ±40 ms, and spotify's own
-    report of where it landed is ~128 ms off till it fixes itself ~130 ms later
-  - pause, seek while paused, resume: ~35 ms of silence, resumes 11-15 ms after the call, and the report
-    stays true
-  so rooms realign with the second one (realign()), on clean readings only.
+  desktop, so every correction is a jump of some kind. a plain seek is 125-200 ms of silence and lands
+  anywhere within ±40. pause, seek while paused, resume is ~35 ms and lands right on it (jumpTo).
+
+  where the music really is came from recording two spotifys on one pc and finding the echo between them:
+  - after our resume the song is at the seek spot from the moment we called resume. 10 jumps landed within
+    the same 10 ms step every time
+  - spotify's position report is NOT that. right after a resume it's off by up to ~180 ms, it "corrects"
+    itself later, and the corrections were noise (20-50 ms the wrong way on average). the old version
+    trusted those and kept jumping after its own tail
+  - a song rolling into the next one on its own keeps the timeline exact (113 vs 116 ms before/after)
+  - mid song nothing drifts, the same gap 3 minutes later
+  so every spotify keeps its own timeline from its last jump (anchor) and the report only gets listened to
+  when it's way off (a real stall or someone seeking). what's left is the codecs: a flac copy and an ogg
+  copy of a song sit 0-40 ms apart depending on the song, nothing up here can see that
   precise = rooms. timestamped positions + matched clocks. loose = the node server, timing there is a guess
   at the network delay so it keeps the old slack. drift is judged on the median of the last few readings
 */
-// tolerance = mid-song drift that gets fixed. a playing song only gets touched past this, the rest of the
-// time players barely drift (spotify's position moved 3 ms in 2.5 min, measured)
-const PRECISE = { tolerance: 15, samples: 5, cooldown: 15000 };
+// tolerance = mid-song drift that gets fixed. on our own timelines both sides read ~0, anything past this
+// is a real slip
+const PRECISE = { tolerance: 20, samples: 5, cooldown: 15000 };
 const LOOSE = { tolerance: 250, samples: 3, cooldown: 30000 };
 /*
-  spotify's position report is only true some of the time. after a song starts it was 57-89 ms off till
-  spotify corrected itself ~6 s in, and after a seek ~128 ms off for ~130 ms (measured). so a report only
-  counts as settled once it's spotify fixing itself (a small jump on the same song), our own realign, or
-  old enough
+  without our own timeline the report is all there is, and it's only sort of true. after a song starts it was
+  57-89 ms off till spotify corrected itself ~6 s in, after a seek ~128 ms off for ~130 ms. so a bare report
+  only counts as settled once it's spotify fixing itself (a small jump on the same song) or old enough
 */
 const SETTLE_REPORT = 7000;
 const SELF_FIX_MAX = 250;
 // realign plans the restart this far ahead, enough for the seek while paused to land first
 const REALIGN_PLAN = 50;
+// a resume spotify hasn't said is playing by now is a slow start (audio still loading), see jumpTo
+const SLOW_START = 300;
+// how long a jump stays parked before it resumes. the ones spotify started ~110 ms late had all resumed within
+// ~120 ms of parking. 5 bad in ~57 room jumps before this, 0 in 30 after (by ear)
+const MIN_PARKED = 200;
 const BIG_JUMP_COOLDOWN = 5000;
+// a report this far from our own timeline = something really happened (a stall, a seek that wasn't ours).
+// spotify's own wobble after a resume went up to ~180 ms
+const ANCHOR_BREAK = 400;
+// buffering this soon after our resume or a song change is just the start, not a stall
+const STALL_GRACE = 1500;
+// and it has to keep saying buffering this long to count as one
+const STALL_MIN = 300;
+// rolled into the next song on its own = the old timeline was at most this far from its end when it changed
+const ROLLOVER_SLACK = 1500;
+// the owner lines its own timeline up once a picked song has played this long (and is past any crossfade)
+const SELF_ANCHOR_AFTER = 1500;
+const SELF_ANCHOR_COOLDOWN = 20000;
+// after a jump, how long a friend watches its own report for the owner's console. debug only, nothing learns off it
+const REPORT_WATCH = 3000;
+// a room position older than this isn't lined up to. a minimized owner sends one a sec, up to ~0.8 s late
+const REF_STALE = 4000;
 /*
-  with spotify minimized it takes 0-200 ms to act on a command and first reports the moment it was asked,
-  then corrects that ~170-230 ms later. so ~4 in 10 single jumps landed 90-320 ms off (measured). every
-  jump gets checked once that correction is in, and goes again if it's off. a jump is happening anyway, so
-  another short one is the least noticeable time to fix it
+  now and then (5 in ~50 room jumps, measured by ear) spotify starts ~110 ms late after the resume. those were
+  the only ones where its first "playing" report sat way further behind our timeline than this pc's usual
+  (-265..-269 vs -50..-164). so a reading this much past the usual = go again, once. 100 tripped on a fine one
 */
-const ALIGN_GOAL = 10;
-const ALIGN_TRIES = 3;
-const ALIGN_CHECK = 600;
-/*
-  some pcs correct it way later tho. a friend on vorbis read ~0 ms off 600 ms after every jump, then 1-4 s in
-  spotify moved its report +100 ms, so every jump really landed 100 ms ahead and the start delay it learned
-  was garbage. so the check waits out that correction (each pc learns how late its come, reportFix), up to
-  this long, and goes by what's left after it
-*/
-const VERIFY_MAX = 5000;
-// the report has to sit still this long before a correction counts as done
-const FIX_QUIET = 800;
-// reports this soon after a resume are still the resume itself, not spotify correcting it
-const RESUME_SETTLE = 500;
-// corrections up to this long after a resume teach how far off its report was (see checkBias)
-const BIAS_WINDOW = 10000;
-// a pc that keeps missing waits longer and longer before trying again, never a blip every 15 s
-const MAX_ALIGN_BACKOFF = 4 * 60 * 1000;
+const LATE_START = 120;
+const LATE_START_COOLDOWN = 20000;
 const TIMING_KEY = 'listenTogether:timing:';
+/*
+  a friend plays the owner's up next as a list of our own. a real playlist link gets fetched by spotify itself,
+  in its own order, and setQueue can't move its songs around. a list it can't look up gets played exactly as
+  given, and setQueue rewrites all of it (adds, removes, reorders) without a hiccup. tested on 1.3.8
+*/
+const UP_NEXT_URI = 'spotify:internal:listen-together';
 // 2 readings this far off in a row is a real jump (buffering, a skip), fixed right away
 const BIG_DRIFT = 1000;
 // progress is prob off for a bit after a seek or resume, so no judging drift till it settles
@@ -100,20 +118,10 @@ function queuedNow(): string[] {
   return raw.filter((t: any) => t?.provider === 'queue').map((t: any) => String(t.contextTrack?.uri));
 }
 
-function median(xs: number[]) {
-  if (!xs.length) return 0;
-  const sorted = [...xs].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)];
-}
-
-/** the last 5 of something this pc learned earlier */
-function savedList(name: string): number[] {
-  try {
-    const v = JSON.parse(localStorage.getItem(TIMING_KEY + name) || '[]');
-    return Array.isArray(v) ? v.filter((x) => Number.isFinite(x)).slice(-5) : [];
-  } catch {
-    return [];
-  }
+/** the current song's real length. the player's duration is that minus any crossfade */
+function songLength() {
+  const item = Spicetify.Platform.PlayerAPI._state?.item;
+  return Number(item?.duration?.milliseconds ?? item?.metadata?.duration) || 0;
 }
 
 /** a timing number this pc learned earlier, or the fallback */
@@ -158,34 +166,51 @@ export default class LTPlayer {
   /** spotify's last position report, and whether it can be trusted (see SETTLE_REPORT) */
   private report = { key: '', track: '', pos: 0, ts: 0, paused: true, since: 0, settled: false };
   private trustNextReport = false;
-  /*
-    ms from resume() to the music really playing, after a seek while paused. learned from where jumps really
-    landed, not from spotify's first report: on a friend's pc every jump landed ~75 ms behind while spotify
-    reported it right on time. kept per pc between sessions. can go below 0 on a pc whose spotify reports the
-    start late. new key cuz the old one got learned off reports that weren't done correcting yet
-  */
-  private resumeLag = savedTiming('startLag', 13);
   /** ms from a seek while paused to spotify saying it's parked there. learned, 10-200 depending on if it's minimized */
   private parkLag = savedTiming('parkLag', 40);
-  /** how long after a resume this pc's spotify still corrects its report. -1 = don't know yet, 0 = it doesn't */
-  private reportFix = savedTiming('reportFix', -1);
   private resumedAt = 0;
-  private checks = 0;
-  /** the last few corrections spotify made to the report right after one of our resumes, see checkBias */
-  private biasSeen = savedList('biasSeen');
-  /** how far that report is behind where the song really is: the middle one, minimized spotify throws a random -100 now and then */
-  private reportBias = median(this.biasSeen);
-  /** the report's still the one from our last resume, nothing's corrected it yet */
-  private biasPending = false;
-  /** that jump's check is done, so a correction from here on means the check was off too */
-  private lateOpen = false;
+  /*
+    our own timeline: at local time `at` the song was at `pos`. set by our jumps, carried into the next song
+    when spotify rolls over on its own. dur = what the player plays of it (the length minus any crossfade),
+    meta = the song's real length, since = when this timeline started
+  */
+  private anchor: { track: string; pos: number; at: number; dur: number; meta: number; since: number } | null = null;
+  /** where a running jump is headed, so the owner's position doesn't blip (or read as paused) mid jump */
+  private jumpPlan: ((t: number) => number) | null = null;
+  private selfAnchorAt = 0;
+  /** this pc's crossfade in ms, worked out at the last song that rolled over (its length minus what played) */
+  private crossfade = 0;
+  /** when spotify started saying it's buffering, 0 = it isn't */
+  private bufferingSince = 0;
+  /** the timeline our last jump made, till spotify's first real "playing" report after it got looked at */
+  private startCheck: LTPlayer['anchor'] = null;
+  /** how far that first report sat from our timeline on the last few jumps here. kept per pc, so the check
+   * works from the first jump of a session too */
+  private startDevs: number[] = (() => {
+    try {
+      const v = JSON.parse(localStorage.getItem(TIMING_KEY + 'startDevs') || '[]');
+      return Array.isArray(v) ? v.filter((x) => Number.isFinite(x)).slice(-7) : [];
+    } catch {
+      return [];
+    }
+  })();
+  private lateFixAt = 0;
   /** when you last picked a song yourself (play, next, previous), see onSongChanged */
   songPickedAt = 0;
   /** tries at copying the room's current queue, see mirrorQueue */
   private mirrorTries = 0;
   private mirroring = false;
-  /** jumps that still missed after all their tries in a row. each one doubles the wait before the next */
-  private alignMisses = 0;
+  /** rooms: the owner's whole up next. null = an older owner that only sends uris (the old mirrorQueue then) */
+  private roomUpNext: UpNext[] | null = null;
+  private upNextKey = '';
+  private upNextTries = 0;
+  private upNextAt = 0;
+  /** your shuffle from before a room's up next took over, put back when you leave */
+  private shuffleBefore: boolean | null = null;
+  /** the room moved on to our next song, we switch to it on the owner's next position (see onChangeSong) */
+  private rollTo: string | null = null;
+  /** the song a running jump puts us on, when it isn't the one we're on (upNextSeat) */
+  private seatFor: string | null = null;
   private realigning = false;
   /** a jump and its checks are running, readings and other jumps keep out */
   private aligning = false;
@@ -213,14 +238,27 @@ export default class LTPlayer {
     }, AD_CHECK_INTERVAL);
     // spotify's reports can come and get fixed within ~130 ms, so look often enough to see both
     setInterval(() => {
-      if (this.client.connected) this.positionSettled();
+      if (!this.client.connected) return;
+      this.positionSettled();
+      this.checkAnchor();
+      this.maybeSelfAnchor();
+      this.mirrorUpNext();
     }, 40);
+    // timers crawl when spotify's minimized, its own state updates don't. a song rolling over has to be seen
+    try {
+      Spicetify.Platform.PlayerAPI.getEvents?.().addListener('update', () => this.checkAnchor());
+    } catch {}
+    // learned off spotify's reports by older versions, all of it turned out to be noise
+    for (const k of ['startLag', 'reportFix', 'biasSeen']) localStorage.removeItem(TIMING_KEY + k);
   }
 
   init() {
     this.patcher.patchAll();
     // a new room, nothing known about it yet. an old room's position got used for a realign once
     this.roomQueue = null;
+    this.roomUpNext = null;
+    this.upNextKey = '';
+    this.upNextTries = 0;
     this.roomNext = '';
     this.mirroredKey = '';
     this.mirrorTries = 0;
@@ -236,10 +274,17 @@ export default class LTPlayer {
 
   unload() {
     this.patcher.unpatchAll();
+    this.anchor = null;
     // left a room: the owner's songs we copied in don't belong in your queue anymore
-    if (this.mirroredKey) {
+    if (this.mirroredKey || this.onUpNextList()) {
       this.mirroredKey = '';
       Promise.resolve(ogPlayerAPI.clearQueue?.()).catch(() => {});
+    }
+    // the owner's list plays in its order with shuffle off, your own shuffle comes back with you
+    if (this.shuffleBefore !== null) {
+      const was = this.shuffleBefore;
+      this.shuffleBefore = null;
+      if (was) Promise.resolve(Spicetify.Player.setShuffle(true)).catch(() => {});
     }
   }
 
@@ -351,6 +396,8 @@ export default class LTPlayer {
       // started it ourselves, so it's at whatever moment that happened to be. realign as soon as the room's
       // position is settled. songs that roll over on their own are left alone, they're already in line
       if (this.liveRoom) this.alignNext = trackUri;
+      // a forced start isn't a roll over, so the old timeline doesn't carry into it
+      this.anchor = null;
       forcePlayTrack(trackUri, context);
       if (!context) return;
       // a private or region locked playlist won't open for everyone. if we didn't land on the song, go solo
@@ -373,10 +420,32 @@ export default class LTPlayer {
       return;
     }
 
-    if (this.currentLoadingTrack === trackUri) {
+    // only if we're really on it. this used to be left over from an older room, so after rejoining a friend
+    // told the room "on it" while playing some other song, and then lined that song up to the room's time
+    if (this.currentLoadingTrack === trackUri && getCurrentTrackUri() === trackUri) {
       if (this.trackLoaded)
         this.client.socket?.emit('changedSong', this.currentLoadingTrack);
       return;
+    }
+
+    /*
+      on the owner's up next our list is theirs, so this is our next song too. but spotify plays a list it didn't
+      fetch itself to the very end, no crossfade, while the owner's playlist crossfades. waiting for ours put
+      friends 6 s behind every song and then they jumped. so it switches on the owner's next position instead,
+      parked right on it (onSyncPosition). a hard cut instead of the fade, but in time
+    */
+    if (this.client.mode?.kind === 'join' && this.onUpNextList() && !isTrackPaused() && this.nextOnList() === trackUri) {
+      if (Spicetify.Player.getDuration() - getTrackProgress() > 1500) {
+        this.rollTo = trackUri;
+        this.alignNext = trackUri;
+        // the owner's position comes twice a sec. if nothing good does, the plain way
+        this.transitionWait = setTimeout(() => {
+          this.transitionWait = null;
+          if (this.rollTo === trackUri) this.rollTo = null;
+          if (this.roomTrackUri === trackUri && getCurrentTrackUri() !== trackUri && !this.aligning) play();
+        }, 3000);
+        return;
+      }
     }
 
     // the room moved to the song we're about to roll into anyway (host's song ended a hair before ours).
@@ -419,8 +488,10 @@ export default class LTPlayer {
   */
   private mirrorQueue() {
     // not mid jump either, a queue change makes spotify report its position again and that'd mess up the check
-    if (this.client.mode?.kind !== 'join' || this.mirroring || this.aligning) return;
-    const want = this.roomQueue?.length ? this.roomQueue : this.roomNext ? [this.roomNext] : [];
+    if (this.client.mode?.kind !== 'join' || this.mirroring || this.aligning || this.roomUpNext) return;
+    // an empty list from the room means nothing's coming up there (one song on repeat), so ours goes empty too.
+    // only an older room that never sends one gets the next song instead
+    const want = this.roomQueue ?? (this.roomNext ? [this.roomNext] : []);
     // older room, no queue from it: only ever set the next song, never wipe
     if (this.roomQueue === null && !want.length) return;
     const mine = getQueuedItems().map((i) => i.uri);
@@ -462,6 +533,119 @@ export default class LTPlayer {
     }
     // one at a time, a single add doesn't touch that cached copy at all
     for (const uri of want.slice(tail ? mine.length : 0)) await ogPlayerAPI.addToQueue([{ uri }]);
+  }
+
+  /** the owner's whole up next, every time it changes */
+  onUpNext(items: UpNext[]) {
+    if (this.client.mode?.kind !== 'join' || !Array.isArray(items)) return;
+    this.roomUpNext = items.filter((i) => i && typeof i.uri === 'string');
+    this.mirrorUpNext();
+  }
+
+  private onUpNextList() {
+    return Spicetify.Platform.PlayerAPI._state?.context?.uri === UP_NEXT_URI;
+  }
+
+  private nextOnList(): string {
+    const next = (Spicetify.Platform.PlayerAPI._queue?._queue?.nextTracks ?? []).find((t: any) => !t?.blocked?.length);
+    return next?.contextTrack?.uri || '';
+  }
+
+  /*
+    keeps a friend's up next exactly the owner's: queued songs, the playlist part, the order, all of it. one
+    setQueue with the whole list, the same call spotify's own queue edits make. only once we're on our own list
+    (UP_NEXT_URI), that happens in the friend's next jump (upNextSeat)
+  */
+  private mirrorUpNext() {
+    if (this.client.mode?.kind !== 'join' || !this.roomUpNext || this.mirroring || this.aligning || this.jumpPlan) return;
+    const Q = Spicetify.Platform.PlayerAPI._queue;
+    const current = getCurrentTrackUri();
+    if (!Q?._queue || !this.onUpNextList() || this.roomTrackUri !== current) return;
+    const want = this.roomUpNext;
+    // mid song change the owner's list can still be the one from the song before
+    if (want[0] && !want[0].q && want[0].uri === current) return;
+    const have = (Q._queue.nextTracks ?? [])
+      .filter((t: any) => !t?.blocked?.length)
+      .map((t: any) => (t?.provider === 'queue' ? 'q:' : '') + t?.contextTrack?.uri);
+    const wantKeys = want.map((i) => (i.q ? 'q:' : '') + i.uri);
+    if (sameList(have, wantKeys)) {
+      this.upNextTries = 0;
+      return;
+    }
+    const key = wantKeys.join(' ');
+    if (key !== this.upNextKey) {
+      this.upNextKey = key;
+      this.upNextTries = 0;
+    }
+    // a list that still doesn't match after 3 goes is left alone, never a loop
+    const wait = this.upNextTries ? 2000 * 2 ** (this.upNextTries - 1) : 0;
+    if (this.upNextTries >= 3 || Date.now() - this.upNextAt < wait) return;
+    this.upNextTries++;
+    this.upNextAt = Date.now();
+    this.mirroring = true;
+    const nextTracks = want.map((i) => ({
+      contextTrack: { uri: i.uri, uid: i.q ? undefined : i.uid, metadata: { is_queued: String(!!i.q) } },
+      provider: i.q ? 'queue' : 'context',
+    }));
+    Promise.resolve(
+      Q._client.setQueue({
+        nextTracks,
+        prevTracks: Q._queue.prevTracks ?? [],
+        // spotify's own edits pass it like this, as text it overflowed
+        queueRevision: BigInt(Q._queue.queueRevision ?? 0),
+      }),
+    )
+      .catch((e: any) => console.warn("[listenTogether] couldn't copy the owner's up next", e))
+      .finally(() => (this.mirroring = false));
+  }
+
+  /*
+    a friend that's in a room with the owner's up next but not on our own list yet: the songs to start it with,
+    this song first. null = nothing to do. the owner's list catching up comes after, through mirrorUpNext
+  */
+  private upNextSeat(): { uri: string; uid?: string }[] | null {
+    if (this.client.mode?.kind !== 'join' || !this.roomUpNext || !Spicetify.Platform.PlayerAPI._contextPlayer?.play) return null;
+    // moving on to the next song of our list: it first, then whatever comes after it on our list. queued ones
+    // can't go in a list like that, mirrorUpNext puts them back right after
+    if (this.seatFor && this.seatFor !== getCurrentTrackUri()) {
+      const list = (Spicetify.Platform.PlayerAPI._queue?._queue?.nextTracks ?? []).filter(
+        (t: any) => !t?.blocked?.length && t?.provider !== 'queue',
+      );
+      const at = list.findIndex((t: any) => t?.contextTrack?.uri === this.seatFor);
+      const rest = at >= 0 ? list.slice(at + 1) : [];
+      return [{ uri: this.seatFor }, ...rest.map((t: any) => ({ uri: t.contextTrack.uri, uid: t.contextTrack.uid }))];
+    }
+    if (this.onUpNextList()) return null;
+    const current = getCurrentTrackUri();
+    if (!current || current !== this.roomTrackUri || !Spicetify.Platform.PlayerAPI._contextPlayer?.play) return null;
+    // still the list from the song before = it starts with this one
+    const want = this.roomUpNext[0] && !this.roomUpNext[0].q && this.roomUpNext[0].uri === current ? this.roomUpNext.slice(1) : this.roomUpNext;
+    return [{ uri: current }, ...want.filter((i) => !i.q).map((i) => ({ uri: i.uri, uid: i.uid }))];
+  }
+
+  /** starts our own list paused on spot, so the jump that's running resumes it on the planned moment */
+  private playUpNextSeat(tracks: { uri: string; uid?: string }[], spot: number) {
+    const P = Spicetify.Platform.PlayerAPI;
+    if (this.shuffleBefore === null) this.shuffleBefore = !!P._state?.shuffle;
+    return P._contextPlayer.play({
+      preparePlayRequest: {
+        context: {
+          uri: UP_NEXT_URI,
+          pages: [{ tracks: tracks.map((t, n) => ({ uri: t.uri, uid: t.uid || `lt${n}`, metadata: {} })), metadata: {}, isLoading: false }],
+          metadata: {},
+          isLoading: false,
+        },
+        playOrigin: { featureIdentifier: 'listen_together' },
+        options: {
+          skipTo: { trackUri: tracks[0].uri, trackUid: 'lt0' },
+          seekTo: { value: BigInt(Math.max(0, Math.round(spot))) },
+          initiallyPaused: true,
+          // the owner's order is the order, spotify shuffling it again would undo all of it
+          playerOptionsOverride: { shufflingContext: { value: false } },
+        },
+      },
+      loggingParams: {},
+    });
   }
 
   get syncOffset() {
@@ -538,16 +722,21 @@ export default class LTPlayer {
       return;
     }
 
+    // a friend that isn't on the room's song yet (still loading it, or stuck on another) would line the wrong
+    // song up to the room's time. it lines up once it gets there instead
+    const join = this.client.mode?.kind === 'join';
+    if (join && this.roomTrackUri && getCurrentTrackUri() !== this.roomTrackUri) {
+      this.alignNext = this.roomTrackUri;
+      return;
+    }
     // already there (the owner's own echo, a resume that changes nothing): leave it alone
     if (!isTrackPaused() && Math.abs(this.progress() - spotAt(Date.now())) < PRECISE.tolerance) return;
     const first = () => Math.max(at, Date.now() + REALIGN_PLAN);
-    const go = () =>
-      this.client.mode?.kind === 'join'
-        ? this.jumpAndCheck(() => spotAt, first(), 'room')
-        : this.jumpTo(spotAt, first(), 'room');
-    // start a bit before the moment so the seek is parked by then and the start lands right on it.
-    // waitUntil and not setTimeout, a minimized spotify would run it up to a second late
-    const lead = 200;
+    const go = () => (join ? this.alignJump(() => spotAt, first(), 'room') : this.jumpTo(spotAt, first(), 'room'));
+    // start a bit before the moment so the seek is parked by then and the start lands right on it. however long
+    // parking's been taking here, minimized that's up to ~200 ms. waitUntil and not setTimeout, a minimized
+    // spotify would run it up to a second late
+    const lead = Math.max(200, Math.round(this.parkLag * 2 + 100));
     if (wait - lead <= 0) return go();
     const gen = this.scheduleGen;
     waitUntil(at - lead).then(() => gen === this.scheduleGen && go());
@@ -568,63 +757,117 @@ export default class LTPlayer {
       const moved = pos - (last.pos + (ts - last.ts));
       const selfFix =
         last.key !== '' && track === last.track && !paused && !last.paused && Math.abs(moved) < SELF_FIX_MAX;
-      // buffering = the music really stopped for a bit, not the report getting fixed
-      if (this.biasPending) this.checkBias(selfFix && !s.isBuffering, moved);
       const ours = this.trustNextReport && !paused;
       if (ours) this.trustNextReport = false;
       this.report = { key, track, pos, ts, paused, since: Date.now(), settled: ours || selfFix };
     }
     if (!this.report.settled && Date.now() - this.report.since > SETTLE_REPORT) this.report.settled = true;
-    return this.report.settled && !paused;
+    if (this.jumpPlan || paused) return false;
+    if (this.anchorNow() !== null) return true;
+    // the owner lines itself up a sec into a song (maybeSelfAnchor). friends going by its bare report before
+    // that would just have to line up all over again right after
+    if (this.client.mode?.kind === 'host' && Date.now() - this.report.since < SETTLE_REPORT) return false;
+    return this.report.settled;
   }
 
-  /** where the song really is: spotify's report, plus how far that report's known to be behind right after our jumps */
+  /** where the song really is: our own timeline when there is one, spotify's report when there isn't */
   progress() {
-    return getTrackProgress() + (this.biasPending && !isTrackPaused() ? this.reportBias : 0);
+    if (this.jumpPlan) return this.jumpPlan(Date.now());
+    return this.anchorNow() ?? getTrackProgress();
+  }
+
+  /** a jump is running. the music's paused for a moment but nobody should take that as a pause */
+  get jumping() {
+    return this.jumpPlan !== null;
+  }
+
+  private anchorNow() {
+    const a = this.anchor;
+    if (!a || isTrackPaused() || a.track !== getCurrentTrackUri()) return null;
+    return a.pos + (Date.now() - a.at);
   }
 
   /*
-    spotify's report right after our resume is behind where the music really is, and it only fixes that later:
-    on its own 1-4 s in on some pcs, or only once something else makes it report again (adding a song moved it
-    +35-47 ms here, +100 on a friend's, measured). going by the raw report the check aimed at one number and
-    the correction moved it to another, so every song he got lined up and then "drifted" 100 ms. so how far
-    behind it is gets learned off every correction and added on (progress()) till spotify corrects it itself.
-    moved = how far this new report moved from the last one
+    keeps our own timeline honest. carries it into the next song when spotify rolls over on its own, drops it
+    when the music really did something else (paused, a stall, a seek that wasn't ours, a picked song)
   */
-  private checkBias(sameChain: boolean, moved: number) {
-    // paused, other song, a real jump: that report's gone
-    if (!sameChain) return void (this.biasPending = false);
-    // the first ~half second is still the resume itself, minimized spotify corrects that one ~200 ms in
-    const age = Date.now() - this.resumedAt;
-    if (age < RESUME_SETTLE) return;
-    this.biasPending = false;
-    // way later it's more likely something else happened than spotify fixing our resume, so don't learn off it
-    if (age > BIAS_WINDOW) return;
-    const missed = moved - this.reportBias;
-    this.biasSeen = [...this.biasSeen, Math.round(moved)].slice(-5);
-    this.reportBias = median(this.biasSeen);
-    localStorage.setItem(TIMING_KEY + 'biasSeen', JSON.stringify(this.biasSeen));
-    // the jump's check is over and went by the old guess, so it was off by what the guess missed. once per jump,
-    // and not off one of those random ones
-    if (!this.lateOpen || Math.abs(missed) < 3 || Math.abs(missed) > 80) return;
-    this.lateOpen = false;
-    this.resumeLag = Math.min(400, Math.max(-200, this.resumeLag + Math.max(-40, Math.min(40, -missed * 0.6))));
-    localStorage.setItem(TIMING_KEY + 'startLag', String(Math.round(this.resumeLag)));
-    console.log(`[listenTogether] spotify corrected itself ${Math.round(moved)} ms ${Date.now() - this.resumedAt} ms after a jump, ${Math.round(missed)} more than expected`);
-    this.sendSyncDebug('late correction', missed);
+  private checkAnchor() {
+    const a = this.anchor;
+    const s = Spicetify.Platform.PlayerAPI._state;
+    if (!a || !s || this.jumpPlan) return;
+    const now = Date.now();
+    const track = s.item?.uri || '';
+    if (track !== a.track) {
+      this.anchor = null;
+      // rolled over on its own: no gap, the new song starts right where the old one's playing part ended (its
+      // length minus crossfade). a picked song or one the room forced is a fresh start and needs a jump
+      // minimized spotify can miss the update where the length shrinks by the crossfade, the last one known fills in
+      const playDur = a.meta > 0 && a.dur >= a.meta ? a.meta - this.crossfade : a.dur;
+      const end = a.at + (playDur - a.pos);
+      const rolled =
+        !s.isPaused && playDur > 0 && now - this.songPickedAt > PICKED_WINDOW && now >= end - ROLLOVER_SLACK && now - end < 3000;
+      if (!rolled || !isListenableTrackType(getTrackType(track))) return;
+      const pos = Number(s.positionAsOfTimestamp) + (now - Number(s.timestamp));
+      // spotify's report this early can be ~90 off. way more = it wasn't a clean roll over after all
+      if (Math.abs(pos - (now - end)) > ANCHOR_BREAK) return;
+      this.crossfade = Math.max(0, a.meta - playDur);
+      this.anchor = { track, pos: 0, at: end, dur: Number(s.duration) || 0, meta: songLength(), since: now };
+      return;
+    }
+    if (s.isPaused) return void (this.anchor = null);
+    // shrinks by the crossfade once spotify knows what's next, has to be the latest one when the song ends
+    if (Number(s.duration) > 0) a.dur = Number(s.duration);
+    this.bufferingSince = s.isBuffering ? this.bufferingSince || now : 0;
+    if (this.startCheck === a && !s.isBuffering && Number(s.timestamp) >= a.at - 5) this.checkStart(a, s);
+    if (now - a.since < STALL_GRACE) return;
+    const off = Number(s.positionAsOfTimestamp) + (now - Number(s.timestamp)) - (a.pos + (now - a.at));
+    // a stall = buffering that sticks around. spotify flashes it for a moment at the end of a song when it moves
+    // on to the next one, and dropping the timeline there cost a friend an extra jump every song
+    const nearEnd = a.pos + (now - a.at) > a.dur - 3000;
+    const stalled = this.bufferingSince > 0 && now - this.bufferingSince > STALL_MIN && !nearEnd;
+    if (stalled || Math.abs(off) > ANCHOR_BREAK) {
+      this.anchor = null;
+      console.log(`[listenTogether] own timeline dropped, ${stalled ? 'spotify is buffering' : `its report is ${Math.round(off)} ms off it`}`);
+    }
   }
 
-  /** spotify corrected its report this long after one of our resumes */
-  private learnReportFix(ms: number) {
-    // up to a late one right away, down slowly. a check that ends before the correction is way worse than a slow one
-    this.reportFix = Math.max(ms, this.reportFix > 0 ? this.reportFix * 0.8 + ms * 0.2 : 0);
-    localStorage.setItem(TIMING_KEY + 'reportFix', String(Math.round(this.reportFix)));
+  /** spotify's first real "playing" report after our jump. way further behind than usual = it started late, go again */
+  private checkStart(a: NonNullable<LTPlayer['anchor']>, s: any) {
+    this.startCheck = null;
+    const now = Date.now();
+    const dev = Number(s.positionAsOfTimestamp) + (now - Number(s.timestamp)) - (a.pos + (now - a.at));
+    const usual = [...this.startDevs].sort((x, y) => x - y)[Math.floor(this.startDevs.length / 2)];
+    this.startDevs = [...this.startDevs, Math.round(dev)].slice(-7);
+    localStorage.setItem(TIMING_KEY + 'startDevs', JSON.stringify(this.startDevs));
+    if (this.startDevs.length < 4 || dev > usual - LATE_START || now - this.lateFixAt < LATE_START_COOLDOWN) return;
+    this.lateFixAt = now;
+    console.log(`[listenTogether] started late (report ${Math.round(dev)} vs usual ${Math.round(usual)}), going again`);
+    if (this.client.mode?.kind === 'join') {
+      this.realign('late start');
+      return;
+    }
+    // the owner goes again onto the same timeline, so whoever lined up to it is right once this lands
+    if (this.aligning || this.jumpPlan) return;
+    this.aligning = true;
+    this.jumpTo((t) => a.pos + (t - a.at), now + REALIGN_PLAN, 'late start').finally(() => (this.aligning = false));
   }
 
-  /** a long check went by without any correction */
-  private learnNoReportFix() {
-    this.reportFix = this.reportFix > 150 ? this.reportFix * 0.6 : 0;
-    localStorage.setItem(TIMING_KEY + 'reportFix', String(Math.round(this.reportFix)));
+  /*
+    the owner's position is what everyone lines up to, so it has to be on a timeline too. a song that rolled
+    over keeps it, a picked one doesn't, so the owner jumps once itself a sec in (~35 ms of quiet). only with
+    friends in the room, and never inside a crossfade, pausing there cuts the old song's tail off
+  */
+  private maybeSelfAnchor() {
+    if (this.client.mode?.kind !== 'host' || this.jumpPlan || this.aligning || !this.trackLoaded) return;
+    if (isTrackPaused() || this.anchorNow() !== null || this.ui.store.listeners.length < 2) return;
+    if (!isListenableTrackType() || Date.now() - this.selfAnchorAt < SELF_ANCHOR_COOLDOWN) return;
+    const pos = getTrackProgress();
+    if (pos < Math.max(SELF_ANCHOR_AFTER, this.crossfade + 500)) return;
+    if (pos > Spicetify.Player.getDuration() - END_GUARD - 3000) return;
+    this.selfAnchorAt = Date.now();
+    const t0 = Date.now();
+    this.aligning = true;
+    this.jumpTo((t) => pos + (t - t0), t0 + REALIGN_PLAN, 'own timeline').finally(() => (this.aligning = false));
   }
 
   /*
@@ -651,6 +894,9 @@ export default class LTPlayer {
     let pausedIt = false;
     let playing = false;
     this.realigning = true;
+    this.jumpPlan = spotAt;
+    // the old timeline's gone the moment we pause, even if this jump gives up halfway
+    this.anchor = null;
     try {
       /*
         a seek sent before spotify has really paused gets dropped, and it then resumes from wherever it
@@ -664,32 +910,78 @@ export default class LTPlayer {
         await waitFor(() => !!state()?.isPaused, 600);
       }
       let parked = false;
-      for (let tries = 0; tries < 3 && !parked; tries++) {
-        resumeAt = Math.max(resumeAt, Date.now() + this.parkLag * 1.5 + 15);
-        const spot = Math.round(spotAt(resumeAt + this.resumeLag));
+      let onTime = false;
+      let spot = 0;
+      let calledAt = 0;
+      let started = false;
+      let slowStarts = 0;
+      // how each try went, for the log when it ends up late
+      const trace: string[] = [];
+      for (let tries = 0; tries < 5 && !onTime; tries++) {
+        // a friend not on the owner's up next yet gets onto it right here, parked on the spot like a seek would.
+        // starting that list takes ~200 ms and spotify redraws its queue right after, a seek ~50. every miss
+        // plans a bit further out
+        const seat = this.upNextSeat();
+        resumeAt = Math.max(resumeAt, Date.now() + (seat ? 450 : this.parkLag * 1.5 + 15 + MIN_PARKED) + tries * 60);
+        spot = Math.round(spotAt(resumeAt));
         if (spot < 0 || spot > end) return false;
         const seekAt = Date.now();
-        await own(() => ogPlayerAPI.seekTo(spot));
+        if (seat) await own(() => this.playUpNextSeat(seat, spot));
+        else await own(() => ogPlayerAPI.seekTo(spot));
         parked = await waitFor(
-          () => !!state()?.isPaused && Math.abs(Number(state().positionAsOfTimestamp) - spot) < 3,
+          () =>
+            !!state()?.isPaused &&
+            Math.abs(Number(state().positionAsOfTimestamp) - spot) < 3 &&
+            (!seat || state()?.item?.uri === seat[0].uri),
           600,
         );
         if (parked) {
           this.parkLag = this.parkLag * 0.7 + (Date.now() - seekAt) * 0.3;
           localStorage.setItem(TIMING_KEY + 'parkLag', String(Math.round(this.parkLag)));
         }
-        // parked too late for the planned moment counts as not parked, plan again
-        if (parked && Date.now() > resumeAt - 2) parked = false;
+        trace.push(`${seat ? 'list' : 'seek'} ${Date.now() - seekAt}/${resumeAt - seekAt}ms${parked ? '' : ' never parked'}`);
+        // parked too late for the planned moment, plan again
+        if (!parked || Date.now() > resumeAt - 2) continue;
+        await waitUntil(resumeAt);
+        /*
+          spotify sometimes hogs the page right when we should resume (redrawing its queue after the list
+          switch held it 27-64 ms). resuming then = starting late, so plan a new moment instead. the music's
+          paused anyway, that's a slightly longer pause and never a late start
+        */
+        const missed = Date.now() - resumeAt;
+        if (missed > 2) {
+          trace.push(`missed by ${missed}ms`);
+          continue;
+        }
+        this.trustNextReport = true;
+        calledAt = Date.now();
+        this.resumedAt = calledAt;
+        await own(() => ogPlayerAPI.resume());
+        started = await waitFor(() => !state()?.isPaused && Number(state().timestamp) >= calledAt - 5, SLOW_START);
+        /*
+          a song spotify hasn't cached yet (a first listen) started ~500 ms after the resume, a cached one says it's
+          playing within ~140. waiting that out = half a sec off, so pause again and give it a fresh moment, the
+          audio's loaded by then
+        */
+        if (!started && slowStarts < 2 && tries < 4) {
+          slowStarts++;
+          trace.push('slow start');
+          await own(() => ogPlayerAPI.pause());
+          await waitFor(() => !!state()?.isPaused, 600);
+          resumeAt = Date.now() + 300;
+          continue;
+        }
+        onTime = true;
       }
-      await waitUntil(resumeAt);
-      // trusted, with what it's known to be off added on (progress())
-      this.trustNextReport = true;
-      this.biasPending = false;
-      this.lateOpen = false;
-      const calledAt = Date.now();
-      this.resumedAt = calledAt;
-      await own(() => ogPlayerAPI.resume());
-      let started = await waitFor(() => !state()?.isPaused && Number(state().timestamp) >= calledAt - 5, 1500);
+      if (!onTime) {
+        // out of tries, go now and go by what spotify says happened
+        await waitUntil(resumeAt);
+        this.trustNextReport = true;
+        calledAt = Date.now();
+        this.resumedAt = calledAt;
+        await own(() => ogPlayerAPI.resume());
+      }
+      if (!started) started = await waitFor(() => !state()?.isPaused && Number(state().timestamp) >= calledAt - 5, 1500);
       // never leave someone sitting paused because a resume got lost somewhere
       if (!started && state()?.isPaused) {
         console.warn("[listenTogether] resume didn't take, trying again");
@@ -698,14 +990,19 @@ export default class LTPlayer {
       }
       playing = started;
       if (started) {
-        // see the resume's report first, so it's not taken for a correction. the owner doesn't get a check, so
-        // a correction counts against its jump from here on. a friend's check opens that when it's done
+        // see the resume's report first, so it's not taken for a correction
         this.positionSettled();
-        this.biasPending = true;
-        this.lateOpen = this.client.mode?.kind !== 'join';
-        const lag = Number(state().timestamp) - calledAt;
-        const off = Number(state().positionAsOfTimestamp) - spotAt(Number(state().timestamp));
-        console.log(`[listenTogether] realigned (${why}), landed ${Math.round(off)} ms off, start lag ${Math.round(lag)} ms`);
+        // parked on the spot = the song's there from the moment resume got called. that's the truth from here
+        // on, not whatever spotify reports (see the top). a seek that never landed gives no timeline
+        // it only really started this long after the resume (still loading after all our tries): when spotify says
+        if (parked && Date.now() - calledAt > SLOW_START + 100)
+          calledAt = Number(state().timestamp) - Math.max(0, Number(state().positionAsOfTimestamp) - spot);
+        if (parked) {
+          this.anchor = { track: getCurrentTrackUri(), pos: spot, at: calledAt, dur: Number(state().duration) || 0, meta: songLength(), since: Date.now() };
+          this.startCheck = this.anchor;
+        }
+        const late = calledAt - resumeAt;
+        console.log(`[listenTogether] jumped (${why}) to ${spot}${parked ? '' : ", seek didn't land"}${late > 2 ? `, ${late} ms late (${trace.join(', ')})` : ''}`);
       }
       this.driftSamples = [];
       this.lastCorrection = Date.now();
@@ -720,15 +1017,20 @@ export default class LTPlayer {
         Promise.resolve(ogPlayerAPI.resume()).finally(() => this.ownCommand--);
       }
       this.realigning = false;
+      this.jumpPlan = null;
     }
   }
 
   /** where the room is at local time t, off its last settled position. null = nothing good to go by */
-  private roomSpotAt() {
+  private roomSpotAt(anyTrack = false) {
     const ref = this.lastRef;
-    if (!ref || !ref.settled || getCurrentTrackUri() !== ref.trackUri) return null;
+    if (!ref || !ref.settled || (!anyTrack && getCurrentTrackUri() !== ref.trackUri)) return null;
+    // the owner's last word on a song the room's already moved on from. a friend once lined up to one of
+    // those, 2 s past where the owner's song had crossfaded out
+    if (this.roomTrackUri && ref.trackUri !== this.roomTrackUri) return null;
     const hostNow = this.client.socket?.hostTime?.();
     if (hostNow == null) return null;
+    if (hostNow - ref.hostTs > REF_STALE) return null;
     // host clock minus ours, so a local moment maps onto the host's timeline
     const skew = hostNow - Date.now();
     return (t: number) => ref.ms + (t + skew - ref.hostTs) + this.syncOffset;
@@ -737,46 +1039,26 @@ export default class LTPlayer {
   /** line up with the room right now. false = nothing good to line up to yet */
   private realign(why: string) {
     if (!this.liveRoom || this.client.mode?.kind !== 'join' || this.aligning || !this.roomSpotAt()) return false;
-    this.jumpAndCheck(() => this.roomSpotAt(), Date.now() + REALIGN_PLAN, why);
+    this.alignJump(() => this.roomSpotAt(), Date.now() + REALIGN_PLAN, why);
     return true;
   }
 
   /*
-    jump, wait for spotify to correct its report of where that landed, check, go again if it's off.
-    spotAtNow is asked fresh every try. anything the room does meanwhile (seek, pause, new song) bumps
-    scheduleGen and stops it
+    a friend lining up: one jump, and that's it. the old version checked every jump against spotify's report
+    and went again when it looked off, but the report is the thing that's off, so it chased its own tail
+    (2-3 jumps every time, landing 50-70 ms off by ear). anything the room does meanwhile bumps scheduleGen
   */
-  private async jumpAndCheck(spotAtNow: () => ((t: number) => number) | null, firstAt: number, why: string) {
+  private async alignJump(spotAtNow: () => ((t: number) => number) | null, firstAt: number, why: string) {
     if (this.aligning) return false;
     this.aligning = true;
-    const gen = this.scheduleGen;
-    const track = getCurrentTrackUri();
     try {
-      for (let i = 0; i < ALIGN_TRIES; i++) {
-        const spotAt = spotAtNow();
-        if (!spotAt) return false;
-        const label = i ? `${why}, try ${i + 1}` : why;
-        if (!(await this.jumpTo(spotAt, i ? Date.now() + REALIGN_PLAN : firstAt, label))) return false;
-        const timeline: string[] = [];
-        const off = await this.landing(spotAtNow, gen, track, timeline);
-        if (off === null) {
-          console.log(`[listenTogether] ${label}: check skipped, ${gen !== this.scheduleGen ? "room did something new" : isTrackPaused() ? "paused" : "other song"}`);
-          return false;
-        }
-        console.log(`[listenTogether] ${label}: really ${Math.round(off)} ms off (${timeline.join(' ')})`);
-        // behind = the music starts later than planned on this pc, so plan it earlier next time. part of the
-        // way and at most 40 ms a go: spotify still lands one randomly ~90 ms off now and then, and a full
-        // step on that swung it the wrong way in testing
-        this.resumeLag = Math.min(400, Math.max(-200, this.resumeLag + Math.max(-40, Math.min(40, -off * 0.6))));
-        localStorage.setItem(TIMING_KEY + 'startLag', String(Math.round(this.resumeLag)));
-        this.sendSyncDebug(label, off, timeline.join(' '));
-        if (Math.abs(off) <= ALIGN_GOAL) {
-          this.alignMisses = 0;
-          return true;
-        }
-      }
-      this.alignMisses++;
-      return false;
+      const spotAt = spotAtNow();
+      if (!spotAt) return false;
+      const ok = await this.jumpTo(spotAt, firstAt, why);
+      if (ok && this.anchor) this.watchReports(why, this.anchor);
+      // lined up with the room on this song already, a "new song" one on top would just be another jump
+      if (ok && this.alignNext === getCurrentTrackUri()) this.alignNext = null;
+      return ok;
     } finally {
       this.aligning = false;
       this.driftSamples = [];
@@ -785,64 +1067,29 @@ export default class LTPlayer {
   }
 
   /*
-    where the last jump really landed (ms ahead of the room), once spotify's done correcting its report: at least
-    ALIGN_CHECK, longer on a pc known to correct late, and never while it's still moving. timeline gets
-    "ms since resume:off" at the start and at every correction. null = the room did something or the song changed
+    for the owner's console only: what this pc's spotify reports for a few secs after a jump, against our own
+    timeline. "ms since the resume:ms the report's ahead" every time it changes. nothing's learned off it
   */
-  private async landing(
-    spotAtNow: () => ((t: number) => number) | null,
-    gen: number,
-    track: string,
-    timeline: string[],
-  ) {
-    const start = this.resumedAt;
-    // every 5th check sits through the whole thing again, in case this pc's corrections got later
-    const probe = this.reportFix < 0 || ++this.checks % 5 === 0;
-    const window = probe ? VERIFY_MAX : Math.min(VERIFY_MAX, Math.max(ALIGN_CHECK, this.reportFix + 1000));
-    const read = () => {
+  private async watchReports(label: string, anchor: NonNullable<LTPlayer['anchor']>) {
+    const timeline: string[] = [];
+    let key = '';
+    let off = 0;
+    const end = anchor.at + REPORT_WATCH;
+    while (Date.now() < end && this.anchor === anchor) {
       const s = Spicetify.Platform.PlayerAPI._state;
-      return { pos: Number(s?.positionAsOfTimestamp), ts: Number(s?.timestamp) };
-    };
-    const offNow = () => {
-      const at = spotAtNow();
-      return at ? this.progress() - at(Date.now()) : null;
-    };
-    const note = () => {
-      const off = offNow();
-      if (off !== null && timeline.length < 16) timeline.push(`${Date.now() - start}:${Math.round(off)}`);
-    };
-    let last = read();
-    let movedAt = 0;
-    note();
-    for (;;) {
-      await waitUntil(Date.now() + 40);
-      if (gen !== this.scheduleGen || getCurrentTrackUri() !== track || isTrackPaused()) return null;
-      this.positionSettled();
-      const now = read();
-      if (now.pos !== last.pos || now.ts !== last.ts) {
-        // spotify also just reports again now and then without anything changing, that's not a correction
-        if (Math.abs(now.pos - (last.pos + (now.ts - last.ts))) >= 3) {
-          movedAt = Date.now();
-          note();
-        }
-        last = now;
+      const k = `${s?.timestamp}|${s?.positionAsOfTimestamp}`;
+      if (k !== key && s && !s.isPaused) {
+        key = k;
+        off = Number(s.positionAsOfTimestamp) + (Date.now() - Number(s.timestamp)) - (anchor.pos + (Date.now() - anchor.at));
+        if (timeline.length < 16) timeline.push(`${Date.now() - anchor.at}:${Math.round(off)}`);
       }
-      const since = Date.now() - start;
-      if (since > VERIFY_MAX + 2000) break;
-      if (since < window || Date.now() - movedAt < FIX_QUIET) continue;
-      break;
+      // a plain timer, waitUntil keeps the event loop spinning and this is just for the console
+      await new Promise((r) => setTimeout(r, 40));
     }
-    // only learned in here, where nothing else is going on. anything else (queue changes, the end of a song)
-    // makes spotify report again too and it learned garbage off that
-    if (movedAt) this.learnReportFix(movedAt - start);
-    // sat through a long one and nothing came, so this pc prob doesn't do it (anymore)
-    else if (window >= 2000) this.learnNoReportFix();
-    note();
-    this.lateOpen = true;
-    return offNow();
+    this.sendSyncDebug(label, off, timeline.join(' '));
   }
 
-  /** how a jump went, to the room owner's console. what made a friend's pc land 75 ms off couldn't be seen otherwise */
+  /** how a jump went, to the room owner's console. off = where spotify's report ended up vs our own timeline */
   private sendSyncDebug(label: string, off: number, timeline = '') {
     if (this.client.mode?.kind !== 'join') return;
     let info: any = {};
@@ -853,9 +1100,7 @@ export default class LTPlayer {
         this.client.socket?.emit('syncDebug', {
           label,
           off: Math.round(off),
-          resumeLag: Math.round(this.resumeLag),
           parkLag: Math.round(this.parkLag),
-          reportFix: Math.round(this.reportFix),
           timeline,
           hidden: document.visibilityState === 'hidden',
           codec: String(info.codecName || ''),
@@ -894,6 +1139,14 @@ export default class LTPlayer {
     if (room && !precise) return;
     if (precise) this.lastRef = { trackUri, ms: milliseconds, hostTs: hostTimestamp!, settled: settled !== false };
     if (!this.trackLoaded || this.delayedResume || this.realigning || this.aligning) return;
+    // the room moved on to our next song (see rollTo in onChangeSong): straight onto it, on the owner's spot
+    if (this.rollTo === trackUri && getCurrentTrackUri() !== trackUri && precise && settled !== false) {
+      this.rollTo = null;
+      this.alignNext = null;
+      this.seatFor = trackUri;
+      this.alignJump(() => this.roomSpotAt(true), Date.now() + REALIGN_PLAN, 'next song').finally(() => (this.seatFor = null));
+      return;
+    }
     if (getCurrentTrackUri() !== trackUri) return;
     if (!precise) return isTrackPaused() ? undefined : this.loosePosition(milliseconds);
 
@@ -908,6 +1161,14 @@ export default class LTPlayer {
       if (this.realign(why)) return;
     }
     if (isTrackPaused()) return;
+    // no timeline of our own = going by spotify's report, and that can be 100+ ms off while it looks fine (a
+    // friend's read ~0 while his music was 100 ahead). so line up once, the jump gives us one
+    if (this.anchorNow() === null) {
+      if (Date.now() < this.settleUntil || Date.now() - this.lastCorrection < BIG_JUMP_COOLDOWN) return;
+      if (getTrackProgress() < this.crossfade + 500) return;
+      this.realign('no timeline');
+      return;
+    }
     // our own report isn't trustworthy right now either (song just started, someone seeked)
     if (!this.positionSettled() || Date.now() < this.settleUntil) return;
 
@@ -933,9 +1194,11 @@ export default class LTPlayer {
     if (!bigJump) {
       if (this.driftSamples.length < PRECISE.samples) return;
       if (Math.abs(median) < PRECISE.tolerance) return;
-      const backoff = Math.min(MAX_ALIGN_BACKOFF, PRECISE.cooldown * 2 ** this.alignMisses);
-      if (Date.now() - this.lastCorrection < backoff) return;
+      if (Date.now() - this.lastCorrection < PRECISE.cooldown) return;
     }
+    // a different crossfade than the owner's lands a rolled over song a sec off. fixed once the fade's done,
+    // pausing inside it cuts the old song's tail off
+    if (getTrackProgress() < this.crossfade + 500) return;
     this.realign(`${Math.round(median)} ms off`);
   }
 
@@ -1010,12 +1273,13 @@ export default class LTPlayer {
       this.realign('offset');
       return;
     }
-    // the owner just moves. a plain seek, the precise jump pauses and the room would take that as the
-    // owner pausing everyone
-    this.correcting = true;
-    this.driftSamples = [];
-    this.settleUntil = Date.now() + SETTLE_TIME;
-    ogPlayerAPI.seekTo(Math.max(0, this.progress() + delta + this.seekLead));
+    // the owner moves its own music. the room reads progress() - offset, so everyone else stays put. the room
+    // also reads a running jump as still playing (jumping), so the short pause doesn't pause everyone
+    if (this.aligning || this.jumpPlan) return;
+    const p0 = this.progress() + delta;
+    const t0 = Date.now();
+    this.aligning = true;
+    this.jumpTo((t) => p0 + (t - t0), t0 + REALIGN_PLAN, 'offset').finally(() => (this.aligning = false));
   }
 
   // Events
@@ -1072,6 +1336,9 @@ export default class LTPlayer {
 
   onLogin() {
     this.roomTrackUri = '';
+    this.currentLoadingTrack = '';
+    this.trackLoaded = true;
+    this.anchor = null;
     pauseTrack();
     if (this.volumeChangeEnabled) {
       this.canChangeVolume = true;

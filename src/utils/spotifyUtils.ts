@@ -55,10 +55,48 @@ export function getQueuedItems(): { uri: string; uid?: string }[] {
 /** what plays next, in order: what you queued, then the playlist's upcoming songs (in your shuffle order) */
 export function getUpcomingUris(count: number): string[] {
   const next: any[] = Spicetify.Platform.PlayerAPI._state?.nextItems || [];
-  return next
-    .map((i) => i?.uri)
-    .filter((uri) => typeof uri === 'string' && (uri.startsWith('spotify:track:') || uri.startsWith('spotify:episode:')))
-    .slice(0, count);
+  const seen = new Set([getCurrentTrackUri()]);
+  const out: string[] = [];
+  for (const i of next) {
+    const uri = i?.uri;
+    if (typeof uri !== 'string' || !(uri.startsWith('spotify:track:') || uri.startsWith('spotify:episode:'))) continue;
+    // repeat fills this with the same songs over and over, one song on repeat went out as that song 10 times
+    // and friends got all 10 in their queue. stops at the first one that's already been
+    if (seen.has(uri)) break;
+    seen.add(uri);
+    out.push(uri);
+    if (out.length >= count) break;
+  }
+  return out;
+}
+
+/** one song coming up, the way rooms pass it on. q = queued by hand, uid = its row in the playlist */
+export type UpNext = { uri: string; uid?: string; q?: boolean };
+
+/*
+  everything coming up exactly as spotify has it: what you queued, then the playlist's next ones in your shuffle
+  order (~80, spotify shows more as it goes). off spotify's queue code, _state only carries the first 50
+*/
+export function getUpNext(max: number): UpNext[] {
+  const P = Spicetify.Platform.PlayerAPI;
+  const raw: any[] = P._queue?._queue?.nextTracks ?? [];
+  const items = raw.length
+    ? raw.map((t) => ({ uri: t?.contextTrack?.uri, uid: t?.contextTrack?.uid, q: t?.provider === 'queue', blocked: !!t?.blocked?.length }))
+    : (P._state?.nextItems ?? []).map((i: any) => ({ uri: i?.uri, uid: i?.uid, q: i?.provider === 'queue', blocked: false }));
+  const s = P._state;
+  const seen = new Set<string>([s?.item?.uid || s?.item?.uri || '']);
+  const out: UpNext[] = [];
+  for (const i of items) {
+    if (typeof i.uri !== 'string' || !/^spotify:(track|episode):/.test(i.uri) || i.blocked) continue;
+    // repeat lists the same rows over and over, one song on repeat went out as that song 10 times. stops where
+    // it starts going round again. queued ones have no row, the same song queued twice is fine
+    const key = i.q ? `q${out.length}` : i.uid || i.uri;
+    if (seen.has(key)) break;
+    seen.add(key);
+    out.push(i.q ? { uri: i.uri, q: true } : typeof i.uid === 'string' && i.uid ? { uri: i.uri, uid: i.uid } : { uri: i.uri });
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 export function isListenableTrackType(trackType?: TrackType) {

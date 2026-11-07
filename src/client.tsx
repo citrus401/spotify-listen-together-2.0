@@ -5,6 +5,8 @@ import {
   forcePlayTrack,
   getCurrentTrackUri,
   getUpcomingUris,
+  getUpNext,
+  UpNext,
   getTrackType,
   isListenableTrackType,
   isTrackPaused,
@@ -14,8 +16,10 @@ import { Transport } from './transport/transport';
 import { PeerHost, PeerJoin, cleanRoomCode } from './transport/peer';
 import { selfId as peerSelfId } from 'trystero';
 
-// how many of the owner's upcoming songs friends get in their queue
+// how many of the owner's upcoming songs older friends get in their queue
 const UPCOMING_SHARED = 10;
+// the whole up next for friends that can take it. spotify itself shows ~80 plus whatever's queued by hand
+const UP_NEXT_SHARED = 150;
 
 /** server = the old node server, host = this spotify is the room, join = someone else's spotify is */
 export type Mode =
@@ -89,11 +93,13 @@ export default class Client {
     const host = new PeerHost(this.ltPlayer.version, code, () => ({
       trackUri: getCurrentTrackUri(),
       position: this.ltPlayer.progress() - this.ltPlayer.syncOffset,
-      playing: !isTrackPaused(),
+      // the owner's own jumps pause for ~35 ms, that's not the owner pausing everyone
+      playing: !isTrackPaused() || this.ltPlayer.jumping,
       nextUri: Spicetify.Platform.PlayerAPI._state?.nextItems?.[0]?.uri,
       // not just what you queued: with shuffle on everyone's playlist order is different, so friends get
       // your actual upcoming songs
       queue: getUpcomingUris(UPCOMING_SHARED),
+      upNext: getUpNext(UP_NEXT_SHARED),
       settled: this.ltPlayer.positionSettled(),
     }));
     this.start({ kind: 'host', code: host.code }, host.self);
@@ -231,6 +237,11 @@ export default class Client {
     // rooms: the owner's whole queue, every time it changes
     on('queueSync', (uris: string[]) => {
       this.ltPlayer.onQueueSync(uris);
+    });
+
+    // rooms: the owner's whole up next, queued songs and the playlist's order, every time it changes
+    on('upNext', (items: UpNext[]) => {
+      this.ltPlayer.onUpNext(items);
     });
 
     // Synchronize the queue on join
