@@ -29,8 +29,10 @@ jobs:
       - name: install
         run: npx --yes yarn@1.22.22 install --frozen-lockfile --ignore-scripts
 
+      # block scalar on purpose, a plain one choked on the ": " inside the json and the whole file didn't parse
       - name: stamp the build number
-        run: echo "{ \"build\": ${{ github.run_number }}, \"sha\": \"${GITHUB_SHA}\" }" > src/build.json
+        run: |
+          echo "{ \"build\": ${{ github.run_number }}, \"sha\": \"${GITHUB_SHA}\" }" > src/build.json
 
       - name: build
         run: npx spicetify-creator --out=out --minify
