@@ -1,33 +1,101 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="380" viewBox="0 0 960 380" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif">
-  <rect width="960" height="380" rx="16" fill="#181818"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="480" viewBox="0 0 960 480" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif">
+  <defs>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#1ed760" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#1ed760" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="link" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#1ed760"/>
+      <stop offset="1" stop-color="#1ed760" stop-opacity="0.55"/>
+    </linearGradient>
+    <filter id="dotglow" x="-200%" y="-200%" width="500%" height="500%">
+      <feGaussianBlur stdDeviation="2.5" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <path id="p1" d="M372 214 C 480 214, 500 158, 620 158"/>
+    <path id="p2" d="M372 254 C 480 254, 500 310, 620 310"/>
+  </defs>
 
-  <!-- relays -->
-  <rect x="330" y="28" width="300" height="64" rx="12" fill="none" stroke="#535353" stroke-dasharray="6 6"/>
-  <text x="480" y="56" text-anchor="middle" font-size="15" font-weight="700" fill="#b3b3b3">Public Nostr relays</text>
-  <text x="480" y="78" text-anchor="middle" font-size="12" fill="#8a8a8a">only used to find each other, handshake is encrypted</text>
-  <path d="M400 92 L200 160 M560 92 L760 160 M480 92 L480 160" stroke="#535353" stroke-dasharray="4 6"/>
+  <rect width="960" height="480" rx="18" fill="#121212"/>
+  <ellipse cx="216" cy="232" rx="250" ry="170" fill="url(#glow)"/>
+
+  <!-- relays: only for the intro -->
+  <path d="M424 88 C 380 120, 290 120, 252 152" fill="none" stroke="#5a5a5a" stroke-width="1.5" stroke-dasharray="3 6" stroke-linecap="round"/>
+  <path d="M536 88 C 580 104, 640 104, 700 120" fill="none" stroke="#5a5a5a" stroke-width="1.5" stroke-dasharray="3 6" stroke-linecap="round"/>
+  <rect x="330" y="30" width="300" height="58" rx="29" fill="#181818" stroke="#3a3a3a" stroke-dasharray="5 5"/>
+  <text x="480" y="55" text-anchor="middle" font-size="14" font-weight="700" fill="#b3b3b3">Nostr relays</text>
+  <text x="480" y="74" text-anchor="middle" font-size="12" fill="#7c7c7c">just the intro · handshake encrypted with the code</text>
 
   <!-- host -->
-  <rect x="60" y="160" width="290" height="150" rx="14" fill="#242424" stroke="#1ed760" stroke-width="2"/>
-  <text x="84" y="196" font-size="17" font-weight="700" fill="#fff">Your Spotify</text>
-  <text x="84" y="222" font-size="13" fill="#1ed760">runs the room</text>
-  <text x="84" y="252" font-size="12" fill="#b3b3b3">everyone follows your real playback</text>
-  <text x="84" y="272" font-size="12" fill="#b3b3b3">play/pause/seek scheduled for all</text>
-  <text x="84" y="292" font-size="12" fill="#b3b3b3">positions + timestamps every second</text>
-
-  <!-- friends -->
-  <rect x="610" y="160" width="290" height="66" rx="14" fill="#242424"/>
-  <text x="634" y="190" font-size="16" font-weight="700" fill="#fff">Friend's Spotify</text>
-  <text x="634" y="212" font-size="12" fill="#b3b3b3">matches clocks with you, lines up</text>
-  <rect x="610" y="244" width="290" height="66" rx="14" fill="#242424"/>
-  <text x="634" y="274" font-size="16" font-weight="700" fill="#fff">Another friend</text>
-  <text x="634" y="296" font-size="12" fill="#b3b3b3">same thing, own account and device</text>
+  <rect x="56" y="152" width="316" height="160" rx="16" fill="#242424" stroke="#1ed760" stroke-opacity="0.55" stroke-width="1.5"/>
+  <circle cx="96" cy="192" r="20" fill="#8d67ab"/>
+  <text x="96" y="199" text-anchor="middle" font-size="18" font-weight="700" fill="#fff">R</text>
+  <text x="128" y="188" font-size="17" font-weight="700" fill="#fff">Your Spotify</text>
+  <text x="128" y="208" font-size="13" fill="#1ed760">runs the room</text>
+  <rect x="300" y="174" width="52" height="22" rx="11" fill="#1ed760" fill-opacity="0.14"/>
+  <circle cx="314" cy="185" r="4" fill="#1ed760">
+    <animate attributeName="opacity" values="1;0.35;1" dur="2s" repeatCount="indefinite"/>
+  </circle>
+  <text x="324" y="189.5" font-size="11" font-weight="700" fill="#1ed760">Live</text>
+  <line x1="76" y1="228" x2="352" y2="228" stroke="#333"/>
+  <circle cx="82" cy="250" r="3" fill="#1ed760"/>
+  <text x="94" y="254" font-size="12.5" fill="#cfcfcf">everyone follows your actual playback</text>
+  <circle cx="82" cy="272" r="3" fill="#1ed760"/>
+  <text x="94" y="276" font-size="12.5" fill="#cfcfcf">play, pause and seek land together</text>
+  <circle cx="82" cy="294" r="3" fill="#1ed760"/>
+  <text x="94" y="298" font-size="12.5" fill="#cfcfcf">position + timestamp every second</text>
 
   <!-- direct links -->
-  <path d="M350 200 H610" stroke="#1ed760" stroke-width="3"/>
-  <path d="M350 270 H610" stroke="#1ed760" stroke-width="3"/>
-  <rect x="412" y="216" width="136" height="38" rx="19" fill="#1ed760"/>
-  <text x="480" y="241" text-anchor="middle" font-size="14" font-weight="700" fill="#0f0f0f">direct, WebRTC</text>
+  <use href="#p1" fill="none" stroke="url(#link)" stroke-width="2.5" stroke-linecap="round"/>
+  <use href="#p2" fill="none" stroke="url(#link)" stroke-width="2.5" stroke-linecap="round"/>
+  <circle r="4" fill="#1ed760" filter="url(#dotglow)">
+    <animateMotion dur="2.4s" repeatCount="indefinite"><mpath href="#p1"/></animateMotion>
+  </circle>
+  <circle r="4" fill="#1ed760" filter="url(#dotglow)">
+    <animateMotion dur="2.4s" begin="-1.2s" repeatCount="indefinite"><mpath href="#p2"/></animateMotion>
+  </circle>
+  <rect x="436" y="220" width="116" height="28" rx="14" fill="#1ed760"/>
+  <text x="494" y="239" text-anchor="middle" font-size="12.5" font-weight="700" fill="#0b0b0b">direct · WebRTC</text>
 
-  <text x="480" y="352" text-anchor="middle" font-size="13" fill="#8a8a8a">no server, no port forwarding. music plays from each person's own Spotify account</text>
+  <!-- friends -->
+  <rect x="620" y="120" width="284" height="76" rx="16" fill="#242424"/>
+  <circle cx="658" cy="158" r="18" fill="#e8115b"/>
+  <text x="658" y="164.5" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">S</text>
+  <text x="688" y="153" font-size="15.5" font-weight="700" fill="#fff">Sam's Spotify</text>
+  <text x="688" y="173" font-size="12.5" fill="#b3b3b3">clock matched to yours, lines up</text>
+
+  <rect x="620" y="272" width="284" height="76" rx="16" fill="#242424"/>
+  <circle cx="658" cy="310" r="18" fill="#27856a"/>
+  <text x="658" y="316.5" text-anchor="middle" font-size="16" font-weight="700" fill="#fff">A</text>
+  <text x="688" y="305" font-size="15.5" font-weight="700" fill="#fff">Alex's Spotify</text>
+  <text x="688" y="325" font-size="12.5" fill="#b3b3b3">own account, own device</text>
+
+  <!-- what that means -->
+  <line x1="56" y1="384" x2="904" y2="384" stroke="#262626"/>
+
+  <g transform="translate(56 408)">
+    <circle cx="16" cy="16" r="16" fill="#1ed760" fill-opacity="0.12"/>
+    <rect x="9.5" y="9" width="13" height="6" rx="1.6" fill="none" stroke="#1ed760" stroke-width="1.6"/>
+    <rect x="9.5" y="17" width="13" height="6" rx="1.6" fill="none" stroke="#1ed760" stroke-width="1.6"/>
+    <path d="M8 24L24 8" stroke="#16281c" stroke-width="4.5" stroke-linecap="round"/>
+    <path d="M8 24L24 8" stroke="#1ed760" stroke-width="1.8" stroke-linecap="round"/>
+    <text x="44" y="13" font-size="14" font-weight="700" fill="#fff">No server</text>
+    <text x="44" y="32" font-size="12.5" fill="#9a9a9a">nothing to host, no port forwarding</text>
+  </g>
+
+  <g transform="translate(346 408)">
+    <circle cx="16" cy="16" r="16" fill="#1ed760" fill-opacity="0.12"/>
+    <circle cx="16" cy="16" r="8" fill="none" stroke="#1ed760" stroke-width="1.8"/>
+    <path d="M16 11.5V16l3 2" fill="none" stroke="#1ed760" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="44" y="13" font-size="14" font-weight="700" fill="#fff">In sync</text>
+    <text x="44" y="32" font-size="12.5" fill="#9a9a9a">clocks matched, drift fixed quietly</text>
+  </g>
+
+  <g transform="translate(636 408)">
+    <circle cx="16" cy="16" r="16" fill="#1ed760" fill-opacity="0.12"/>
+    <circle cx="16" cy="13" r="3.5" fill="none" stroke="#1ed760" stroke-width="1.8"/>
+    <path d="M9.5 23c1.2-3.2 3.6-4.6 6.5-4.6s5.3 1.4 6.5 4.6" fill="none" stroke="#1ed760" stroke-width="1.8" stroke-linecap="round"/>
+    <text x="44" y="13" font-size="14" font-weight="700" fill="#fff">Your own account</text>
+    <text x="44" y="32" font-size="12.5" fill="#9a9a9a">everyone plays from their own Spotify</text>
+  </g>
 </svg>
