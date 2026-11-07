@@ -1,4 +1,12 @@
 async function main() {
+  /*
+    an update runs on top of the installed file, and that file already put its css in. spicetify-creator only
+    adds css when there's no style with this id yet, so the update kept the installed version's look (build 6
+    ran with build 5's css). this runs before that check does, so removing it here lets ours go in.
+    has to stay above the first await
+  */
+  if ((window as any).__listenTogetherBuild) document.getElementById('listenTogether')?.remove();
+
   if (
     !Spicetify.CosmosAsync ||
     !Spicetify.Platform ||

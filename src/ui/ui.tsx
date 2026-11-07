@@ -77,6 +77,8 @@ export default class UI implements PanelApi {
       if (!this.chipEl) {
         this.chipEl = document.createElement('div');
         this.chipEl.id = 'listenTogether-chip';
+        // in the page first, so the chip can measure itself on its first render
+        extra.insertBefore(this.chipEl, extra.firstChild);
         ReactDOM.render(<RoomChip api={this} />, this.chipEl);
         sizeWatch.observe(this.chipEl);
       }

@@ -157,15 +157,24 @@ function useHiddenCodeWidth(ref: React.RefObject<HTMLElement>, labelRef: React.R
   React.useLayoutEffect(() => {
     const chip = ref.current;
     const label = labelRef.current;
-    // 0 = not in the page yet, nothing to measure
-    if (!chip || !label || !label.offsetWidth) return;
-    const hide = `${label.offsetWidth + 8}px`;
-    if (chip.style.getPropertyValue('--lt-hide') === hide) return;
-    // a new code is a new resting size, not a hover, so no sliding
-    chip.classList.add('lt-chip--still');
-    chip.style.setProperty('--lt-hide', hide);
-    void getComputedStyle(chip).clipPath;
-    chip.classList.remove('lt-chip--still');
+    if (!chip || !label) return;
+    const measure = () => {
+      // 0 = not in the page yet, nothing to measure
+      if (!label.offsetWidth) return;
+      const hide = `${label.offsetWidth + 8}px`;
+      if (chip.style.getPropertyValue('--lt-hide') === hide) return;
+      // a new code is a new resting size, not a hover, so no sliding
+      chip.classList.add('lt-chip--still');
+      chip.style.setProperty('--lt-hide', hide);
+      void getComputedStyle(chip).clipPath;
+      chip.classList.remove('lt-chip--still');
+    };
+    measure();
+    // joining right as spotify starts renders the chip before it's in the page, and nothing re-renders it
+    // after, so the clip never got set and you got an empty pill. watching the label catches it going in
+    const watch = new ResizeObserver(measure);
+    watch.observe(label);
+    return () => watch.disconnect();
   });
 }
 

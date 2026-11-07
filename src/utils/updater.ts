@@ -36,12 +36,15 @@ export async function loadAcceptedBuild(settings: SettingsManager): Promise<bool
   const wanted = s.acceptedBuild;
   if (s.updateMode === 'off' || !(wanted > INSTALLED_BUILD)) return false;
 
+  // our css, the update brings its own (app.ts does this too, for installs older than this code)
+  const ourCss = document.getElementById('listenTogether');
   try {
     const res = await fetch(`${RAW}/builds/${wanted}.js`, { cache: 'no-store' });
     if (!res.ok) throw new Error(`http ${res.status}`);
     const code = await res.text();
     if (code.length < 10000) throw new Error('that file is way too small to be the extension');
 
+    ourCss?.remove();
     // inline script, the same thing marketplace does in here
     const script = document.createElement('script');
     script.textContent = `window.__listenTogetherBuild = ${Number(wanted)};\n${code}`;
@@ -50,6 +53,8 @@ export async function loadAcceptedBuild(settings: SettingsManager): Promise<bool
       throw new Error("spotify wouldn't run it");
   } catch (e) {
     console.warn(`[listenTogether] couldn't load build ${wanted}, using the installed one`, e);
+    // installed one keeps running, so it needs its look back
+    if (ourCss && !document.getElementById('listenTogether')) document.head.appendChild(ourCss);
     return false;
   }
 
