@@ -27,6 +27,50 @@ export default class UI implements PanelApi {
     sometimes and our node can get dropped, so this just puts it back
   */
   private mountChip() {
+    /*
+      chip goes in the empty space first, the bar only shifts over by whatever's missing, so a wide window
+      moves nothing. the chip is always as wide as it is hovered (the code's just clipped at rest), so
+      hovering never resizes anything.
+      resizing the bar is the expensive bit: every width change makes spotify restyle for ~75ms at 1440p
+      (measured), and doing that every second lagged the whole app. so this only reads, and writes when the
+      number actually changes
+    */
+    const reserve = () => {
+      const chip = this.chipEl;
+      const extra = chip?.parentElement;
+      const right = extra?.parentElement;
+      if (!chip || !extra || !right) return;
+      const taken = () =>
+        right.classList.contains('lt-chip-room') ? parseFloat(right.style.getPropertyValue('--lt-chip-space')) || 0 : 0;
+      const give = (px: number) => {
+        if (px === taken()) return;
+        right.style.setProperty('--lt-chip-space', `${px}px`);
+        right.classList.toggle('lt-chip-room', px > 0);
+      };
+      const used = chip.offsetWidth ? chip.offsetWidth + 8 : 0;
+      if (!used) {
+        give(0);
+        return;
+      }
+      // always leaves 1px spare, so a chip that just fits never looks like a squeezed one below
+      const most = used + 1;
+      const wanted = () => {
+        const free = chip.getBoundingClientRect().left - extra.getBoundingClientRect().left;
+        // the empty space spotify's own buttons leave when we're not there
+        const spare = free + used - taken();
+        return { free, px: Math.min(most, Math.max(0, Math.ceil(most - spare))) };
+      };
+      let want = wanted();
+      // under 1px free = spotify's buttons might be squeezed (the volume slider shrinks), and then the
+      // numbers lie about how much is missing. give it everything once and measure again
+      if (want.free < 1) {
+        give(most);
+        want = wanted();
+      }
+      if (Math.abs(want.px - taken()) >= 1) give(want.px);
+    };
+    const sizeWatch = new ResizeObserver(reserve);
+    window.addEventListener('resize', reserve);
     const mount = () => {
       const extra = document.querySelector('.main-nowPlayingBar-extraControls');
       if (!extra) return;
@@ -34,8 +78,12 @@ export default class UI implements PanelApi {
         this.chipEl = document.createElement('div');
         this.chipEl.id = 'listenTogether-chip';
         ReactDOM.render(<RoomChip api={this} />, this.chipEl);
+        sizeWatch.observe(this.chipEl);
       }
       if (this.chipEl.parentElement !== extra) extra.insertBefore(this.chipEl, extra.firstChild);
+      // spotify adds and hides its own buttons (lyrics, narrow windows), so the empty space changes on its own.
+      // just reads when nothing changed, so it's free
+      reserve();
     };
     mount();
     setInterval(mount, 1000);

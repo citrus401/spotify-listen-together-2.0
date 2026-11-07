@@ -118,19 +118,22 @@ function CopyButton({ text, api, label }: { text: string; api: PanelApi; label?:
 export function RoomChip({ api }: { api: PanelApi }) {
   useStore(api.store);
   const st = api.state();
+  const ref = React.useRef<HTMLButtonElement>(null);
+  const labelRef = React.useRef<HTMLSpanElement>(null);
+  const tip = st.status === 'connecting' ? 'Connecting' : st.kind === 'server' ? 'Server' : 'Room';
+  useNativeTooltip(ref, st.status === 'idle' ? null : tip);
+  useHiddenCodeWidth(ref, labelRef);
   if (st.status === 'idle') return null;
 
   const people = api.store.listeners;
   const label = st.status === 'connecting' ? 'Connecting' : st.kind === 'server' ? 'Server' : st.code;
-  const names = people.map((p) => p.name).join(', ');
   return (
-    <button
-      className={`lt-chip lt-chip--${st.status}`}
-      onClick={() => api.openPanel()}
-      title={`Listen Together${st.kind === 'server' ? '' : ` · room ${st.code}`}${names ? ` · ${names}` : ''}`}
-    >
+    <button ref={ref} className={`lt-chip lt-chip--${st.status}`} onClick={() => api.openPanel()} aria-label={`Listen Together ${tip}`}>
       <span className="lt-dot" />
-      <span className="lt-chip__label">{label}</span>
+      {/* the code, slides out on hover */}
+      <span ref={labelRef} className="lt-chip__label">
+        {label}
+      </span>
       {st.status === 'connected' && people.length > 0 && (
         <span className="lt-chip__people">
           <span className="lt-stack">
@@ -142,6 +145,53 @@ export function RoomChip({ api }: { api: PanelApi }) {
         </span>
       )}
     </button>
+  );
+}
+
+/*
+  the code is always laid out, the chip just clips it off at rest (see panel.scss). anything that changes
+  layout in spotify's player bar costs a full restyle, so hovering only touches clip-path, transform and
+  opacity. this tells the css how much to clip
+*/
+function useHiddenCodeWidth(ref: React.RefObject<HTMLElement>, labelRef: React.RefObject<HTMLElement>) {
+  React.useLayoutEffect(() => {
+    const chip = ref.current;
+    const label = labelRef.current;
+    // 0 = not in the page yet, nothing to measure
+    if (!chip || !label || !label.offsetWidth) return;
+    const hide = `${label.offsetWidth + 8}px`;
+    if (chip.style.getPropertyValue('--lt-hide') === hide) return;
+    // a new code is a new resting size, not a hover, so no sliding
+    chip.classList.add('lt-chip--still');
+    chip.style.setProperty('--lt-hide', hide);
+    void getComputedStyle(chip).clipPath;
+    chip.classList.remove('lt-chip--still');
+  });
+}
+
+/*
+  spotify's own tooltip (the dark bubble "Queue" gets), through the same Spicetify.Tippy spicetify's player
+  bar buttons use. looked up off window so this file still renders outside spotify
+*/
+function useNativeTooltip(ref: React.RefObject<HTMLElement>, content: string | null) {
+  const tippy = React.useRef<any>(null);
+  React.useEffect(() => {
+    const S = (window as any).Spicetify;
+    // leaving a room unmounts the button, so the next one needs its own tippy
+    if (tippy.current && tippy.current.reference !== ref.current) {
+      tippy.current.destroy();
+      tippy.current = null;
+    }
+    if (!ref.current || !content || !S?.Tippy) return;
+    if (!tippy.current) tippy.current = S.Tippy(ref.current, { ...S.TippyProps, content });
+    else tippy.current.setContent(content);
+  });
+  React.useEffect(
+    () => () => {
+      tippy.current?.destroy();
+      tippy.current = null;
+    },
+    [],
   );
 }
 

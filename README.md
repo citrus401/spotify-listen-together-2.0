@@ -86,7 +86,7 @@ Your Spotify is the room, so keep it open while you listen. Everyone follows you
   <img src="docs/panel-room.png" alt="A room with its code, who's listening, and who's host" width="440">
 </p>
 
-While you're in a room, a chip in the player bar shows the code and who's listening. Click it to open the panel.
+While you're in a room, a chip in the player bar shows who's listening. Hover it to see the room code, click it to open the panel.
 
 <p align="center">
   <img src="docs/chip.png" alt="The room chip in Spotify's player bar" width="480">
